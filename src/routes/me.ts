@@ -23,3 +23,22 @@ meRouter.get('/studios', async (req: Request, res: Response, next: NextFunction)
     next(err);
   }
 });
+
+const SUBSCRIPTION_FIELDS =
+  'id, studio_id, status, current_period_start, current_period_end, cancel_at_period_end' as const;
+
+meRouter.get('/subscriptions', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user) throw new ApiError(401, 'unauthorized', 'missing user');
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .select(SUBSCRIPTION_FIELDS)
+      .eq('user_id', req.user.id)
+      .eq('status', 'active')
+      .order('current_period_end', { ascending: false });
+    if (error) throw new ApiError(500, 'internal', error.message);
+    res.json({ subscriptions: data ?? [] });
+  } catch (err) {
+    next(err);
+  }
+});
