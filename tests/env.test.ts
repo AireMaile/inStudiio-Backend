@@ -7,6 +7,7 @@ describe('env loader', () => {
       SUPABASE_URL: 'http://localhost:54321',
       SUPABASE_SERVICE_ROLE_KEY: 'fake-service-role',
       SUPABASE_JWT_SECRET: 'fake-jwt-secret',
+      STRIPE_SECRET_KEY: 'sk_test_fake',
       PORT: '3000',
       NODE_ENV: 'development',
       LOG_LEVEL: 'info',
@@ -17,6 +18,16 @@ describe('env loader', () => {
 
   it('throws when a required var is missing', () => {
     expect(() => parseEnv({ PORT: '3000' })).toThrow();
+  });
+
+  it('rejects when STRIPE_SECRET_KEY is missing', () => {
+    expect(() =>
+      parseEnv({
+        SUPABASE_URL: 'http://localhost:54321',
+        SUPABASE_SERVICE_ROLE_KEY: 'srv',
+        SUPABASE_JWT_SECRET: 'jwt',
+      }),
+    ).toThrow();
   });
 
   it('throws when PORT is not numeric', () => {
