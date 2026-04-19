@@ -1,14 +1,8 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-
-beforeAll(() => {
-  process.env.SUPABASE_URL = 'http://localhost:54321';
-  process.env.SUPABASE_SERVICE_ROLE_KEY = 'x';
-  process.env.SUPABASE_JWT_SECRET = 'x';
-});
+import { describe, it, expect } from 'vitest';
+import { parseEnv } from '../src/env.js';
 
 describe('env loader', () => {
-  it('parses a valid env object', async () => {
-    const { parseEnv } = await import('../src/env.js');
+  it('parses a valid env object', () => {
     const result = parseEnv({
       SUPABASE_URL: 'http://localhost:54321',
       SUPABASE_SERVICE_ROLE_KEY: 'fake-service-role',
@@ -21,13 +15,11 @@ describe('env loader', () => {
     expect(result.PORT).toBe(3000);
   });
 
-  it('throws when a required var is missing', async () => {
-    const { parseEnv } = await import('../src/env.js');
+  it('throws when a required var is missing', () => {
     expect(() => parseEnv({ PORT: '3000' })).toThrow();
   });
 
-  it('throws when PORT is not numeric', async () => {
-    const { parseEnv } = await import('../src/env.js');
+  it('throws when PORT is not numeric', () => {
     expect(() =>
       parseEnv({
         SUPABASE_URL: 'http://localhost:54321',
