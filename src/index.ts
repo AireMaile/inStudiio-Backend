@@ -4,6 +4,7 @@ import { env } from './env.js';
 import { logger } from './logger.js';
 import { healthRouter } from './routes/health.js';
 import { studiosRouter } from './routes/studios.js';
+import { meRouter } from './routes/me.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 export function createApp(): Express {
@@ -12,6 +13,7 @@ export function createApp(): Express {
   app.use(express.json());
   app.use('/health', healthRouter);
   app.use('/studios', studiosRouter);
+  app.use('/me', meRouter);
   app.use(errorHandler);
   return app;
 }
