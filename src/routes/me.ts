@@ -11,13 +11,13 @@ meRouter.use(requireAuth);
 
 meRouter.get('/studios', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) throw new ApiError(401, 'unauthorized', 'missing user');
+    if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
     const { data, error } = await supabase
       .from('studios')
       .select(STUDIO_FIELDS)
       .eq('owner_user_id', req.user.id)
       .order('created_at', { ascending: true });
-    if (error) throw new ApiError(500, 'internal', error.message);
+    if (error) throw error;
     res.json({ studios: data ?? [] });
   } catch (err) {
     next(err);
@@ -29,14 +29,14 @@ const SUBSCRIPTION_FIELDS =
 
 meRouter.get('/subscriptions', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) throw new ApiError(401, 'unauthorized', 'missing user');
+    if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
     const { data, error } = await supabase
       .from('subscriptions')
       .select(SUBSCRIPTION_FIELDS)
       .eq('user_id', req.user.id)
       .eq('status', 'active')
       .order('current_period_end', { ascending: false });
-    if (error) throw new ApiError(500, 'internal', error.message);
+    if (error) throw error;
     res.json({ subscriptions: data ?? [] });
   } catch (err) {
     next(err);
