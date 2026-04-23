@@ -1,20 +1,25 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-const Schema = z.object({
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  SUPABASE_JWT_SECRET: z.string().min(1),
-  STRIPE_SECRET_KEY: z.string().min(1),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
-  CLOUDFLARE_STREAM_API_TOKEN: z.string().optional(),
-  CLOUDFLARE_STREAM_SIGNING_KEY_ID: z.string().optional(),
-  CLOUDFLARE_STREAM_SIGNING_KEY_JWK: z.string().optional(),
-  PORT: z.coerce.number().int().positive().default(3000),
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
-});
+const Schema = z
+  .object({
+    SUPABASE_URL: z.string().url(),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+    SUPABASE_JWT_SECRET: z.string().min(1),
+    STRIPE_SECRET_KEY: z.string().min(1),
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
+    MUX_TOKEN_ID: z.string().min(1),
+    MUX_TOKEN_SECRET: z.string().min(1),
+    MUX_WEBHOOK_SECRET: z.string().min(1),
+    APP_ORIGIN: z.string().url().optional(),
+    PORT: z.coerce.number().int().positive().default(3000),
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+  })
+  .refine(
+    (v) => v.NODE_ENV !== 'production' || !!v.APP_ORIGIN,
+    { message: 'APP_ORIGIN is required when NODE_ENV=production', path: ['APP_ORIGIN'] },
+  );
 
 export type Env = z.infer<typeof Schema>;
 
