@@ -97,7 +97,7 @@ describe('POST /webhooks/mux — event handling', () => {
     const body = {
       type: 'video.upload.asset_created',
       id: `${EVENT_PREFIX}ac_${Date.now()}`,
-      data: { id: 'asset_abc', passthrough: video.id },
+      data: { id: 'upload_xyz', asset_id: 'asset_abc', passthrough: video.id },
     };
     const res = await postWebhook(app, body);
     expect(res.status).toBe(200);
@@ -181,6 +181,30 @@ describe('POST /webhooks/mux — event handling', () => {
     };
     const res = await postWebhook(app, body);
     expect(res.status).toBe(200);
+  });
+
+  it('invalid passthrough UUID causes DB error → 500 + ledger rolled back', async () => {
+    const app = createApp();
+    const eventId = `${EVENT_PREFIX}dberr_${Date.now()}`;
+    const body = {
+      type: 'video.asset.ready',
+      id: eventId,
+      data: {
+        passthrough: 'not-a-uuid',
+        duration: 1,
+        playback_ids: [{ id: 'pb_x', policy: 'public' }],
+      },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(500);
+
+    // Ledger row must have been rolled back so Mux's retry is re-processed,
+    // not short-circuited as a duplicate.
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(0);
   });
 
   it('passthrough pointing to non-existent video returns 200, logs, no-op', async () => {

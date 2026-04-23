@@ -44,7 +44,7 @@ describe('POST /webhooks/mux — idempotency', () => {
     const body = {
       type: 'video.upload.asset_created',
       id: `${EVENT_PREFIX}replay_${Date.now()}`,
-      data: { id: 'asset_first', passthrough: video.id },
+      data: { id: 'upload_first', asset_id: 'asset_first', passthrough: video.id },
     };
 
     for (let i = 0; i < 3; i++) {

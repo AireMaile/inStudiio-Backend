@@ -1,5 +1,12 @@
 import { supabase } from '../../src/supabase.js';
 
+// SQL LIKE treats `_` as a single-character wildcard and `%` as multi-char,
+// so prefix-based cleanup helpers MUST escape those characters or risk
+// aliasing between test files. Postgres uses `\` as the default escape char.
+function escapeLikePrefix(prefix: string): string {
+  return prefix.replace(/\\/g, '\\\\').replace(/[_%]/g, (ch) => `\\${ch}`);
+}
+
 export interface TestStudio {
   id: string;
   slug: string;
@@ -29,7 +36,10 @@ export async function insertTestStudio(opts: {
 }
 
 export async function deleteTestStudiosBySlugPrefix(prefix: string): Promise<void> {
-  const { error } = await supabase.from('studios').delete().like('slug', `${prefix}%`);
+  const { error } = await supabase
+    .from('studios')
+    .delete()
+    .like('slug', `${escapeLikePrefix(prefix)}%`);
   if (error) throw error;
 }
 
@@ -99,7 +109,7 @@ export async function deleteTestVideosByStudioPrefix(prefix: string): Promise<vo
   const { data: studios } = await supabase
     .from('studios')
     .select('id')
-    .like('slug', `${prefix}%`);
+    .like('slug', `${escapeLikePrefix(prefix)}%`);
   const ids = (studios ?? []).map((s) => s.id);
   if (ids.length === 0) return;
   const { error } = await supabase.from('videos').delete().in('studio_id', ids);
@@ -107,6 +117,9 @@ export async function deleteTestVideosByStudioPrefix(prefix: string): Promise<vo
 }
 
 export async function deleteAllWebhookEventsByPrefix(prefix: string): Promise<void> {
-  const { error } = await supabase.from('mux_webhook_events').delete().like('event_id', `${prefix}%`);
+  const { error } = await supabase
+    .from('mux_webhook_events')
+    .delete()
+    .like('event_id', `${escapeLikePrefix(prefix)}%`);
   if (error) throw error;
 }
