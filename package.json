@@ -20,6 +20,7 @@
     "onboard:studio": "tsx scripts/onboard-studio.ts"
   },
   "dependencies": {
+    "@mux/mux-node": "^14",
     "@supabase/supabase-js": "^2.103.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
