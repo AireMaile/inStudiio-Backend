@@ -6,6 +6,7 @@ import { healthRouter } from './routes/health.js';
 import { studiosRouter } from './routes/studios.js';
 import { meRouter } from './routes/me.js';
 import { createVideosRouter } from './routes/videos.js';
+import { createMuxWebhookRouter } from './routes/muxWebhook.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 
@@ -17,6 +18,16 @@ export function createApp(deps: AppDeps = {}): Express {
   const mux = deps.mux ?? defaultMux;
   const app = express();
   app.use(pinoHttp({ logger }));
+
+  // IMPORTANT: the Mux webhook route must receive the RAW body (Buffer) so that
+  // HMAC signature verification works. Mount it with express.raw() BEFORE the
+  // global express.json() parser.
+  app.use(
+    '/webhooks/mux',
+    express.raw({ type: 'application/json' }),
+    createMuxWebhookRouter({ mux }),
+  );
+
   app.use(express.json());
   app.use('/health', healthRouter);
   app.use('/studios', studiosRouter);
