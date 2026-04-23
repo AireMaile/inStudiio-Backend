@@ -1,6 +1,7 @@
 lockfileVersion: 5.3
 
 specifiers:
+  '@mux/mux-node': ^14
   '@supabase/supabase-js': ^2.103.3
   '@types/express': ^5.0.6
   '@types/jsonwebtoken': ^9.0.10
@@ -20,6 +21,7 @@ specifiers:
   zod: ^4.3.6
 
 dependencies:
+  '@mux/mux-node': 14.0.1
   '@supabase/supabase-js': 2.103.3
   dotenv: 17.4.2
   express: 5.2.1
@@ -275,6 +277,11 @@ packages:
   /@jridgewell/sourcemap-codec/1.5.5:
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
     dev: true
+
+  /@mux/mux-node/14.0.1:
+    resolution: {integrity: sha512-wpLRvxVHEVmwMUInT95gFiQbKp62KpEX5ViG4aaK1W6q2vZMTUNCFLKvWHN0L3q8uVd6KQYHNnAL8e8bHOEWCg==}
+    hasBin: true
+    dev: false
 
   /@napi-rs/wasm-runtime/1.1.4_6f2a637fa34e8fea8da32b99e667d51c:
     resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
