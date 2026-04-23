@@ -4,6 +4,7 @@ import { supabase } from '../supabase.js';
 import { env } from '../env.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
+import { hasActiveSubscription } from '../lib/access.js';
 import type { MuxClient } from '../mux.js';
 
 const VIDEO_FIELDS =
@@ -171,9 +172,74 @@ export function createVideosRouter(deps: VideosDeps): Router {
     }
   };
 
+  const listVideos: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+      const slug = String(req.params.slug ?? '');
+      const { data: studio, error: studioErr } = await supabase
+        .from('studios')
+        .select('id, owner_user_id')
+        .eq('slug', slug)
+        .maybeSingle();
+      if (studioErr) throw studioErr;
+      if (!studio) throw new ApiError(404, 'not_found', 'studio not found');
+
+      const isOwner = studio.owner_user_id === req.user.id;
+      if (!isOwner) {
+        const subscribed = await hasActiveSubscription({ supabase }, req.user.id, studio.id);
+        if (!subscribed) throw new ApiError(403, 'forbidden', 'subscription required');
+      }
+
+      let q = supabase
+        .from('videos')
+        .select(VIDEO_FIELDS)
+        .eq('studio_id', studio.id)
+        .order('created_at', { ascending: false });
+      if (!isOwner) q = q.eq('status', 'ready');
+      const { data, error } = await q;
+      if (error) throw error;
+      res.status(200).json({ videos: data ?? [] });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  const getVideo: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+      const videoId = String(req.params.id ?? '');
+      const { data: row, error } = await supabase
+        .from('videos')
+        .select(`${VIDEO_FIELDS}, studios!inner(owner_user_id)`)
+        .eq('id', videoId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!row) throw new ApiError(404, 'not_found', 'video not found');
+      const studio = Array.isArray((row as any).studios)
+        ? (row as any).studios[0]
+        : (row as any).studios;
+      const isOwner = studio.owner_user_id === req.user.id;
+      if (!isOwner) {
+        const subscribed = await hasActiveSubscription(
+          { supabase },
+          req.user.id,
+          (row as any).studio_id,
+        );
+        if (!subscribed) throw new ApiError(403, 'forbidden', 'subscription required');
+        if ((row as any).status !== 'ready') throw new ApiError(404, 'not_found', 'video not found');
+      }
+      const { studios: _omit, ...video } = row as any;
+      res.status(200).json({ video });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   router.post('/studios/:slug/videos', requireAuth, createVideo);
   router.patch('/videos/:id', requireAuth, patchVideo);
   router.delete('/videos/:id', requireAuth, deleteVideo);
+  router.get('/studios/:slug/videos', requireAuth, listVideos);
+  router.get('/videos/:id', requireAuth, getVideo);
 
   return router;
 }
