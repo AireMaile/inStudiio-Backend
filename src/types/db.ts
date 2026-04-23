@@ -34,6 +34,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      mux_webhook_events: {
+        Row: {
+          event_id: string
+          event_type: string
+          received_at: string
+        }
+        Insert: {
+          event_id: string
+          event_type: string
+          received_at?: string
+        }
+        Update: {
+          event_id?: string
+          event_type?: string
+          received_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -155,34 +173,46 @@ export type Database = {
       }
       videos: {
         Row: {
-          cloudflare_uid: string
           created_at: string
           description: string | null
           duration_seconds: number | null
+          error_message: string | null
           id: string
-          published_at: string | null
+          mux_asset_id: string | null
+          mux_playback_id: string | null
+          mux_upload_id: string | null
+          status: string
           studio_id: string
           title: string
+          updated_at: string
         }
         Insert: {
-          cloudflare_uid: string
           created_at?: string
           description?: string | null
           duration_seconds?: number | null
+          error_message?: string | null
           id?: string
-          published_at?: string | null
+          mux_asset_id?: string | null
+          mux_playback_id?: string | null
+          mux_upload_id?: string | null
+          status?: string
           studio_id: string
           title: string
+          updated_at?: string
         }
         Update: {
-          cloudflare_uid?: string
           created_at?: string
           description?: string | null
           duration_seconds?: number | null
+          error_message?: string | null
           id?: string
-          published_at?: string | null
+          mux_asset_id?: string | null
+          mux_playback_id?: string | null
+          mux_upload_id?: string | null
+          status?: string
           studio_id?: string
           title?: string
+          updated_at?: string
         }
         Relationships: [
           {
