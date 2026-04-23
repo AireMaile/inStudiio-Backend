@@ -14,12 +14,40 @@ const CreateBody = z.object({
   description: z.string().max(5000).optional(),
 });
 
+const PatchBody = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    description: z.string().max(5000).optional(),
+  })
+  .refine((v) => v.title !== undefined || v.description !== undefined, {
+    message: 'at least one of title or description is required',
+  });
+
 export interface VideosDeps {
   mux: Pick<MuxClient, 'video'>;
 }
 
 export function createVideosRouter(deps: VideosDeps): Router {
   const router = Router();
+
+  async function loadOwnedVideo(userId: string, videoId: string) {
+    const { data, error } = await supabase
+      .from('videos')
+      .select('id, studio_id, mux_asset_id, studios!inner(owner_user_id)')
+      .eq('id', videoId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new ApiError(404, 'not_found', 'video not found');
+    const studio = Array.isArray(data.studios) ? data.studios[0] : (data.studios as any);
+    if (studio.owner_user_id !== userId) {
+      throw new ApiError(403, 'forbidden', 'not the owner of this video');
+    }
+    return {
+      id: data.id,
+      studio_id: data.studio_id,
+      mux_asset_id: data.mux_asset_id as string | null,
+    };
+  }
 
   const createVideo: RequestHandler = async (req, res, next) => {
     try {
@@ -90,7 +118,62 @@ export function createVideosRouter(deps: VideosDeps): Router {
     }
   };
 
+  const patchVideo: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+      const videoId = String(req.params.id ?? '');
+      await loadOwnedVideo(req.user.id, videoId);
+      const parsed = PatchBody.safeParse(req.body);
+      if (!parsed.success) {
+        throw new ApiError(400, 'bad_request', parsed.error.issues[0]?.message ?? 'invalid body');
+      }
+      const patch: { updated_at: string; title?: string; description?: string } = {
+        updated_at: new Date().toISOString(),
+      };
+      if (parsed.data.title !== undefined) patch.title = parsed.data.title;
+      if (parsed.data.description !== undefined) patch.description = parsed.data.description;
+
+      const { data: updated, error: updateErr } = await supabase
+        .from('videos')
+        .update(patch)
+        .eq('id', videoId)
+        .select(VIDEO_FIELDS)
+        .single();
+      if (updateErr || !updated) throw updateErr ?? new Error('update returned no row');
+      res.status(200).json({ video: updated });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  const deleteVideo: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+      const videoId = String(req.params.id ?? '');
+      const vid = await loadOwnedVideo(req.user.id, videoId);
+
+      if (vid.mux_asset_id) {
+        try {
+          await deps.mux.video.assets.delete(vid.mux_asset_id);
+        } catch (muxErr) {
+          req.log?.warn(
+            { err: muxErr, assetId: vid.mux_asset_id },
+            'mux assets.delete failed; continuing',
+          );
+        }
+      }
+
+      const { error: delErr } = await supabase.from('videos').delete().eq('id', videoId);
+      if (delErr) throw delErr;
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  };
+
   router.post('/studios/:slug/videos', requireAuth, createVideo);
+  router.patch('/videos/:id', requireAuth, patchVideo);
+  router.delete('/videos/:id', requireAuth, deleteVideo);
 
   return router;
 }
