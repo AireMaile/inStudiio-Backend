@@ -1,8 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/index.js';
 import { signMuxPayload } from '../helpers/muxSignature.js';
 import { env } from '../../src/env.js';
+import { supabase } from '../../src/supabase.js';
+import { createTestUser, deleteTestUser, type TestUser } from '../helpers/testUsers.js';
+import {
+  insertTestStudio,
+  insertTestVideo,
+  deleteTestStudiosBySlugPrefix,
+  deleteTestVideosByStudioPrefix,
+  deleteAllWebhookEventsByPrefix,
+} from '../helpers/testData.js';
+
+const SLUG_PREFIX = 'plan3-vid-webhook-';
+const EVENT_PREFIX = 'evt_plan3_';
 
 function postWebhook(app: any, body: any, opts?: { ts?: number; sig?: string; secret?: string }) {
   const raw = JSON.stringify(body);
@@ -54,5 +66,135 @@ describe('POST /webhooks/mux — signature verification', () => {
       .set('Content-Type', 'application/json')
       .send({ type: 'x', id: 'y', data: {} });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /webhooks/mux — event handling', () => {
+  const users: TestUser[] = [];
+  beforeEach(async () => {
+    await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
+    await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteAllWebhookEventsByPrefix(EVENT_PREFIX);
+  });
+  afterEach(async () => {
+    await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
+    await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteAllWebhookEventsByPrefix(EVENT_PREFIX);
+    for (const u of users) await deleteTestUser(u.id);
+    users.length = 0;
+  });
+
+  it('video.upload.asset_created sets status=preparing and mux_asset_id', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}ac-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'waiting' });
+
+    const app = createApp();
+    const body = {
+      type: 'video.upload.asset_created',
+      id: `${EVENT_PREFIX}ac_${Date.now()}`,
+      data: { id: 'asset_abc', passthrough: video.id },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase.from('videos').select('status, mux_asset_id').eq('id', video.id).single();
+    expect(data?.status).toBe('preparing');
+    expect(data?.mux_asset_id).toBe('asset_abc');
+  });
+
+  it('video.asset.ready sets status=ready, mux_playback_id (public), duration_seconds', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}rd-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'preparing', muxAssetId: 'asset_zz' });
+
+    const app = createApp();
+    const body = {
+      type: 'video.asset.ready',
+      id: `${EVENT_PREFIX}rd_${Date.now()}`,
+      data: {
+        passthrough: video.id,
+        duration: 42.5,
+        playback_ids: [
+          { id: 'pb_signed_xxx', policy: 'signed' },
+          { id: 'pb_public_ok', policy: 'public' },
+        ],
+      },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('videos')
+      .select('status, mux_playback_id, duration_seconds')
+      .eq('id', video.id)
+      .single();
+    expect(data?.status).toBe('ready');
+    expect(data?.mux_playback_id).toBe('pb_public_ok');
+    expect(Number(data?.duration_seconds)).toBeCloseTo(42.5);
+  });
+
+  it('video.asset.errored sets status=errored and error_message', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}er-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'preparing' });
+
+    const app = createApp();
+    const body = {
+      type: 'video.asset.errored',
+      id: `${EVENT_PREFIX}er_${Date.now()}`,
+      data: {
+        passthrough: video.id,
+        errors: [{ messages: ['input_invalid', 'codec_unsupported'] }],
+      },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('videos')
+      .select('status, error_message')
+      .eq('id', video.id)
+      .single();
+    expect(data?.status).toBe('errored');
+    expect(data?.error_message).toMatch(/input_invalid.*codec_unsupported/);
+  });
+
+  it('unknown event type returns 200 with no DB writes', async () => {
+    const app = createApp();
+    const body = {
+      type: 'video.asset.created',
+      id: `${EVENT_PREFIX}unknown_${Date.now()}`,
+      data: { passthrough: '00000000-0000-0000-0000-000000000000' },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
+  });
+
+  it('passthrough pointing to non-existent video returns 200, logs, no-op', async () => {
+    const app = createApp();
+    const body = {
+      type: 'video.asset.ready',
+      id: `${EVENT_PREFIX}orphan_${Date.now()}`,
+      data: {
+        passthrough: '00000000-0000-0000-0000-000000000000',
+        duration: 1,
+        playback_ids: [{ id: 'pb_x', policy: 'public' }],
+      },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
   });
 });
