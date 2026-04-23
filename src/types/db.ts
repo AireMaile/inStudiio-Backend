@@ -61,7 +61,7 @@ export type Database = {
           description: string | null
           id: string
           name: string
-          owner_user_id: string | null
+          owner_user_id: string
           price_monthly: number
           slug: string
           stripe_price_id: string
@@ -72,7 +72,7 @@ export type Database = {
           description?: string | null
           id?: string
           name: string
-          owner_user_id?: string | null
+          owner_user_id: string
           price_monthly?: number
           slug: string
           stripe_price_id: string
@@ -83,7 +83,7 @@ export type Database = {
           description?: string | null
           id?: string
           name?: string
-          owner_user_id?: string | null
+          owner_user_id?: string
           price_monthly?: number
           slug?: string
           stripe_price_id?: string

@@ -16,7 +16,8 @@
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
-    "gen:types": "supabase gen types typescript --local > src/types/db.ts"
+    "gen:types": "supabase gen types typescript --local > src/types/db.ts",
+    "onboard:studio": "tsx scripts/onboard-studio.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",
@@ -25,6 +26,7 @@
     "jsonwebtoken": "^9.0.3",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "stripe": "^22.0.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
