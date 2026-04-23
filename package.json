@@ -16,7 +16,8 @@
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
-    "gen:types": "supabase gen types typescript --local > src/types/db.ts"
+    "gen:types": "supabase gen types typescript --local > src/types/db.ts",
+    "onboard:studio": "tsx scripts/onboard-studio.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",
