@@ -52,9 +52,45 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
     }
 
     try {
-      // Event-specific handlers added in later tasks.
-      logger.info({ eventId: event.id, type: event.type }, 'stripe webhook: unhandled event type');
-      res.status(200).json({ noop: true });
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object as any;
+          const meta = session?.metadata ?? {};
+          const userId = typeof meta.user_id === 'string' ? meta.user_id : null;
+          const studioId = typeof meta.studio_id === 'string' ? meta.studio_id : null;
+          const subId = typeof session?.subscription === 'string' ? session.subscription : null;
+          const custId = typeof session?.customer === 'string' ? session.customer : null;
+          if (!userId || !studioId || !subId || !custId) {
+            logger.warn({ eventId: event.id }, 'checkout.session.completed missing metadata/ids; noop');
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const sub = (await deps.stripe.subscriptions.retrieve(subId)) as any;
+          const { error: upsertErr } = await supabase
+            .from('subscriptions')
+            .upsert(
+              {
+                user_id: userId,
+                studio_id: studioId,
+                stripe_subscription_id: subId,
+                stripe_customer_id: custId,
+                status: sub.status,
+                current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
+                current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+                cancel_at_period_end: sub.cancel_at_period_end,
+              },
+              { onConflict: 'user_id,studio_id' },
+            );
+          if (upsertErr) throw upsertErr;
+          res.status(200).json({ ok: true });
+          return;
+        }
+        default: {
+          logger.info({ eventId: event.id, type: event.type }, 'stripe webhook: unhandled event type');
+          res.status(200).json({ noop: true });
+          return;
+        }
+      }
     } catch (err) {
       // Roll back the ledger so Stripe's retry reprocesses instead of short-circuiting.
       await supabase.from('stripe_webhook_events').delete().eq('event_id', event.id);
