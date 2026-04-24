@@ -15,6 +15,7 @@ import { createTestUser, deleteTestUser, type TestUser } from '../helpers/testUs
 import {
   checkoutSessionCompleted,
   invoicePaymentSucceeded,
+  invoicePaymentFailed,
 } from '../fixtures/stripeEvents.js';
 
 const SLUG_PREFIX = 'plan4-sub-wh-';
@@ -215,5 +216,38 @@ describe('POST /webhooks/stripe — event handling', () => {
     const app = createApp({ stripe });
     const res = await postEvent(app, event);
     expect(res.status).toBe(200);
+  });
+
+  it('invoice.payment_failed sets status=past_due', async () => {
+    const user = await createTestUser('plan4-sub-wh-u');
+    users.push(user);
+    const studio = await insertTestStudio({
+      ownerUserId: user.id,
+      slug: `${SLUG_PREFIX}inv-fail-${Date.now()}`,
+    });
+    const subId = `sub_test_p4wh_${Date.now()}`;
+    await supabase.from('subscriptions').insert({
+      user_id: user.id,
+      studio_id: studio.id,
+      stripe_subscription_id: subId,
+      stripe_customer_id: `cus_test_p4wh_${Date.now()}`,
+      status: 'active',
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
+      cancel_at_period_end: false,
+    });
+
+    const stripe = makeStripeMock();
+    const event = invoicePaymentFailed({ subId });
+    const app = createApp({ stripe });
+    const res = await postEvent(app, event);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('subscriptions')
+      .select('status')
+      .eq('stripe_subscription_id', subId)
+      .single();
+    expect(data?.status).toBe('past_due');
   });
 });
