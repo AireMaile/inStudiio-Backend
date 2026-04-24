@@ -8,6 +8,7 @@ describe('env loader', () => {
       SUPABASE_SERVICE_ROLE_KEY: 'fake-service-role',
       SUPABASE_JWT_SECRET: 'fake-jwt-secret',
       STRIPE_SECRET_KEY: 'sk_test_fake',
+      STRIPE_WEBHOOK_SECRET: 'whsec_fake',
       MUX_TOKEN_ID: 'fake-mux-id',
       MUX_TOKEN_SECRET: 'fake-mux-secret',
       MUX_WEBHOOK_SECRET: 'fake-mux-webhook-secret',

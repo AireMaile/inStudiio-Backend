@@ -7,6 +7,7 @@ import { studiosRouter } from './routes/studios.js';
 import { meRouter } from './routes/me.js';
 import { createVideosRouter } from './routes/videos.js';
 import { createMuxWebhookRouter } from './routes/muxWebhook.js';
+import { createStripeWebhookRouter } from './routes/stripeWebhook.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 import { stripe as defaultStripe } from './stripe.js';
@@ -19,7 +20,7 @@ export interface AppDeps {
 
 export function createApp(deps: AppDeps = {}): Express {
   const mux = deps.mux ?? defaultMux;
-  const _stripe = deps.stripe ?? defaultStripe;
+  const stripe = deps.stripe ?? defaultStripe;
   const app = express();
   app.use(pinoHttp({ logger }));
 
@@ -30,6 +31,12 @@ export function createApp(deps: AppDeps = {}): Express {
     '/webhooks/mux',
     express.raw({ type: 'application/json' }),
     createMuxWebhookRouter({ mux }),
+  );
+
+  app.use(
+    '/webhooks/stripe',
+    express.raw({ type: 'application/json' }),
+    createStripeWebhookRouter({ stripe }),
   );
 
   app.use(express.json());
