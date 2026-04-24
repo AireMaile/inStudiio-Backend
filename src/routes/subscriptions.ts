@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import { supabase } from '../supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
+import { env } from '../env.js';
 
 const CreateBody = z.object({ studioId: z.string().uuid() });
 const BLOCKING_STATUSES = new Set(['active', 'past_due', 'incomplete']);
@@ -71,8 +72,26 @@ export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
         if (updProfileErr) throw updProfileErr;
       }
 
-      // Task 17 replaces this placeholder.
-      throw new ApiError(500, 'internal', 'checkout session creation not yet implemented');
+      const baseUrl = env.APP_ORIGIN ?? `http://localhost:${env.PORT}`;
+      let session: { url: string | null };
+      try {
+        session = await deps.stripe.checkout.sessions.create({
+          mode: 'subscription',
+          customer: customerId,
+          line_items: [{ price: studio.stripe_price_id, quantity: 1 }],
+          subscription_data: { metadata: { user_id: req.user.id, studio_id: studio.id } },
+          success_url: `${baseUrl}/subscribe/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${baseUrl}/subscribe/cancel`,
+        });
+      } catch (stripeErr) {
+        req.log?.error({ err: stripeErr }, 'stripe checkout.sessions.create failed');
+        throw new ApiError(502, 'stripe_error', 'Payment provider is temporarily unavailable. Please try again.');
+      }
+      if (!session.url) {
+        throw new ApiError(502, 'stripe_error', 'Stripe did not return a checkout URL');
+      }
+      res.status(200).json({ checkoutUrl: session.url });
+      return;
     } catch (err) {
       next(err);
     }

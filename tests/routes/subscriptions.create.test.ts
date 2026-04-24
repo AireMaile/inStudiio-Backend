@@ -123,6 +123,86 @@ describe('POST /subscriptions', () => {
     expect(stripe.customers.create).not.toHaveBeenCalled();
   });
 
+  it('200 returns checkoutUrl and passes metadata + success/cancel URLs to Stripe', async () => {
+    const owner = await createTestUser('plan4-sub-create-owner');
+    const user = await createTestUser('plan4-sub-create-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}ok-${Date.now()}`,
+    });
+
+    const stripe = makeStripeMock();
+    stripe.checkout.sessions.create.mockResolvedValueOnce({
+      id: 'cs_test_happy',
+      url: 'https://checkout.stripe.com/c/pay/cs_test_happy',
+    });
+
+    const app = createApp({ stripe });
+    const res = await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${signUserToken(user)}`)
+      .send({ studioId: studio.id });
+    expect(res.status).toBe(200);
+    expect(res.body.checkoutUrl).toBe('https://checkout.stripe.com/c/pay/cs_test_happy');
+
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'subscription',
+        line_items: [{ price: expect.stringContaining('price_test_'), quantity: 1 }],
+        subscription_data: { metadata: { user_id: user.id, studio_id: studio.id } },
+        success_url: expect.stringContaining('/subscribe/success'),
+        cancel_url: expect.stringContaining('/subscribe/cancel'),
+      }),
+    );
+  });
+
+  it('200 allowed after canceled subscription (resubscribe)', async () => {
+    const owner = await createTestUser('plan4-sub-create-owner');
+    const user = await createTestUser('plan4-sub-create-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}resub-${Date.now()}`,
+    });
+    await insertTestSubscription({
+      userId: user.id,
+      studioId: studio.id,
+      status: 'canceled',
+      stripeSubId: `sub_test_p4c_cancel_${Date.now()}`,
+    });
+
+    const stripe = makeStripeMock();
+    const app = createApp({ stripe });
+    const res = await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${signUserToken(user)}`)
+      .send({ studioId: studio.id });
+    expect(res.status).toBe(200);
+    expect(res.body.checkoutUrl).toBeDefined();
+  });
+
+  it('502 stripe_error when checkout.sessions.create throws', async () => {
+    const owner = await createTestUser('plan4-sub-create-owner');
+    const user = await createTestUser('plan4-sub-create-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}502-${Date.now()}`,
+    });
+
+    const stripe = makeStripeMock();
+    stripe.checkout.sessions.create.mockRejectedValueOnce(new Error('stripe is down'));
+
+    const app = createApp({ stripe });
+    const res = await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${signUserToken(user)}`)
+      .send({ studioId: studio.id });
+    expect(res.status).toBe(502);
+    expect(res.body.error?.code).toBe('stripe_error');
+  });
+
   for (const status of ['active', 'past_due', 'incomplete'] as const) {
     it(`409 already_subscribed when existing subscription is ${status}`, async () => {
       const owner = await createTestUser('plan4-sub-create-owner');
