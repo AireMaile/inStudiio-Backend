@@ -67,6 +67,21 @@ describe('POST /webhooks/mux — signature verification', () => {
       .send({ type: 'x', id: 'y', data: {} });
     expect(res.status).toBe(400);
   });
+
+  it('returns 400 when Content-Type is not application/json', async () => {
+    const app = createApp();
+    const body = { type: 'video.asset.ready', id: 'evt_plan3_ctype', data: {} };
+    const raw = JSON.stringify(body);
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = signMuxPayload(raw, ts, env.MUX_WEBHOOK_SECRET);
+    const res = await request(app)
+      .post('/webhooks/mux')
+      .set('Content-Type', 'text/plain')
+      .set('Mux-Signature', sig)
+      .send(raw);
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('bad_request');
+  });
 });
 
 describe('POST /webhooks/mux — event handling', () => {

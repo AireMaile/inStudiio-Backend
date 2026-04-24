@@ -17,6 +17,11 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
   const router = Router();
 
   const handler: RequestHandler = async (req, res) => {
+    const ct = req.header('content-type') ?? '';
+    if (!/^application\/json(\s*;|$)/i.test(ct)) {
+      res.status(400).json({ error: { code: 'bad_request', message: 'content-type must be application/json' } });
+      return;
+    }
     // `express.raw` produces a Buffer; the Mux SDK's unwrap() requires the
     // exact raw JSON string used when signing.
     const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
