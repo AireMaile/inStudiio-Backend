@@ -8,6 +8,7 @@ import { meRouter } from './routes/me.js';
 import { createVideosRouter } from './routes/videos.js';
 import { createMuxWebhookRouter } from './routes/muxWebhook.js';
 import { createStripeWebhookRouter } from './routes/stripeWebhook.js';
+import { createSubscriptionsRouter } from './routes/subscriptions.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 import { stripe as defaultStripe } from './stripe.js';
@@ -43,6 +44,7 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use('/health', healthRouter);
   app.use('/studios', studiosRouter);
   app.use('/me', meRouter);
+  app.use('/subscriptions', createSubscriptionsRouter({ stripe }));
   app.use('/', createVideosRouter({ mux }));
   app.use(errorHandler);
   return app;

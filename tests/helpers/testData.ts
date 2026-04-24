@@ -46,7 +46,7 @@ export async function deleteTestStudiosBySlugPrefix(prefix: string): Promise<voi
 export async function insertTestSubscription(opts: {
   userId: string;
   studioId: string;
-  status?: 'active' | 'canceled' | 'past_due';
+  status?: 'active' | 'canceled' | 'past_due' | 'incomplete' | 'incomplete_expired' | 'trialing' | 'unpaid';
   stripeSubId?: string;
 }): Promise<{ id: string }> {
   const { data, error } = await supabase
