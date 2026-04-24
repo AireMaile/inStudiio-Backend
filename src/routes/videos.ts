@@ -181,6 +181,18 @@ export function createVideosRouter(deps: VideosDeps): Router {
   const listVideos: RequestHandler = async (req, res, next) => {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+
+      const rawLimit = req.query.limit;
+      let limit = 20;
+      if (rawLimit !== undefined) {
+        const n = Number(rawLimit);
+        if (!Number.isInteger(n) || n < 1 || n > 100) {
+          throw new ApiError(400, 'bad_request', 'limit must be an integer between 1 and 100');
+        }
+        limit = n;
+      }
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+
       const slug = String(req.params.slug ?? '');
       const { data: studio, error: studioErr } = await supabase
         .from('studios')
@@ -200,11 +212,15 @@ export function createVideosRouter(deps: VideosDeps): Router {
         .from('videos')
         .select(VIDEO_FIELDS)
         .eq('studio_id', studio.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(limit);
       if (!isOwner) q = q.eq('status', 'ready');
+      if (cursor) q = q.lt('created_at', cursor);
       const { data, error } = await q;
       if (error) throw error;
-      res.status(200).json({ videos: data ?? [] });
+      const rows = data ?? [];
+      const nextCursor = rows.length === limit ? rows[rows.length - 1].created_at : null;
+      res.status(200).json({ videos: rows, nextCursor });
     } catch (err) {
       next(err);
     }
