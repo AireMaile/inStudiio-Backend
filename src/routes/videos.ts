@@ -85,7 +85,10 @@ export function createVideosRouter(deps: VideosDeps): Router {
       if (insertErr || !inserted) throw insertErr ?? new Error('videos insert returned no row');
 
       // 2. Create Mux direct upload.
-      const corsOrigin = env.APP_ORIGIN ?? '*';
+      const corsOrigin = env.APP_ORIGIN ?? (env.NODE_ENV === 'production' ? null : '*');
+      if (!corsOrigin) {
+        throw new ApiError(500, 'internal', 'APP_ORIGIN is required in production');
+      }
       let upload: { id: string; url: string };
       try {
         upload = (await deps.mux.video.uploads.create({
