@@ -137,6 +137,51 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           res.status(200).json({ ok: true });
           return;
         }
+        case 'customer.subscription.updated': {
+          const sub = event.data.object as any;
+          const subId = typeof sub?.id === 'string' ? sub.id : null;
+          if (!subId) {
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const { data: updated, error: updateErr } = await supabase
+            .from('subscriptions')
+            .update({
+              status: sub.status,
+              cancel_at_period_end: !!sub.cancel_at_period_end,
+              current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
+              current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+            })
+            .eq('stripe_subscription_id', subId)
+            .select('id');
+          if (updateErr) throw updateErr;
+          if (!updated || updated.length === 0) {
+            res.status(200).json({ noop: true });
+            return;
+          }
+          res.status(200).json({ ok: true });
+          return;
+        }
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object as any;
+          const subId = typeof sub?.id === 'string' ? sub.id : null;
+          if (!subId) {
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const { data: updated, error: updateErr } = await supabase
+            .from('subscriptions')
+            .update({ status: 'canceled', cancel_at_period_end: false })
+            .eq('stripe_subscription_id', subId)
+            .select('id');
+          if (updateErr) throw updateErr;
+          if (!updated || updated.length === 0) {
+            res.status(200).json({ noop: true });
+            return;
+          }
+          res.status(200).json({ ok: true });
+          return;
+        }
         default: {
           logger.info({ eventId: event.id, type: event.type }, 'stripe webhook: unhandled event type');
           res.status(200).json({ noop: true });
