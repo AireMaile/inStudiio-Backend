@@ -9,13 +9,17 @@ import { createVideosRouter } from './routes/videos.js';
 import { createMuxWebhookRouter } from './routes/muxWebhook.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
+import { stripe as defaultStripe } from './stripe.js';
+import type Stripe from 'stripe';
 
 export interface AppDeps {
   mux?: Pick<MuxClient, 'video' | 'webhooks'>;
+  stripe?: Pick<Stripe, 'checkout' | 'subscriptions' | 'customers' | 'webhooks'>;
 }
 
 export function createApp(deps: AppDeps = {}): Express {
   const mux = deps.mux ?? defaultMux;
+  const _stripe = deps.stripe ?? defaultStripe;
   const app = express();
   app.use(pinoHttp({ logger }));
 
