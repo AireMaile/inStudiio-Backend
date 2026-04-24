@@ -73,6 +73,56 @@ describe('POST /subscriptions', () => {
     expect(res.body.error?.code).toBe('studio_not_found');
   });
 
+  it('lazily creates a Stripe customer and persists stripe_customer_id on profile', async () => {
+    const owner = await createTestUser('plan4-sub-create-owner');
+    const user = await createTestUser('plan4-sub-create-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}lazy-${Date.now()}`,
+    });
+
+    const stripe = makeStripeMock();
+    stripe.customers.create.mockResolvedValueOnce({ id: 'cus_test_p4c_lazy' });
+
+    const app = createApp({ stripe });
+    await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${signUserToken(user)}`)
+      .send({ studioId: studio.id });
+
+    expect(stripe.customers.create).toHaveBeenCalledTimes(1);
+    expect(stripe.customers.create).toHaveBeenCalledWith(
+      expect.objectContaining({ email: user.email, metadata: { user_id: user.id } }),
+    );
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('stripe_customer_id')
+      .eq('id', user.id)
+      .single();
+    expect(profile?.stripe_customer_id).toBe('cus_test_p4c_lazy');
+  });
+
+  it('reuses existing stripe_customer_id — does NOT call customers.create', async () => {
+    const owner = await createTestUser('plan4-sub-create-owner');
+    const user = await createTestUser('plan4-sub-create-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}reuse-${Date.now()}`,
+    });
+    await supabase.from('profiles').update({ stripe_customer_id: 'cus_preexisting' }).eq('id', user.id);
+
+    const stripe = makeStripeMock();
+    const app = createApp({ stripe });
+    await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${signUserToken(user)}`)
+      .send({ studioId: studio.id });
+    expect(stripe.customers.create).not.toHaveBeenCalled();
+  });
+
   for (const status of ['active', 'past_due', 'incomplete'] as const) {
     it(`409 already_subscribed when existing subscription is ${status}`, async () => {
       const owner = await createTestUser('plan4-sub-create-owner');

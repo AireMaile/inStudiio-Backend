@@ -12,7 +12,7 @@ export interface SubscriptionsDeps {
   stripe: Pick<Stripe, 'checkout' | 'customers' | 'subscriptions'>;
 }
 
-export function createSubscriptionsRouter(_deps: SubscriptionsDeps): Router {
+export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
   const router = Router();
 
   const createSubscription: RequestHandler = async (req, res, next) => {
@@ -45,7 +45,33 @@ export function createSubscriptionsRouter(_deps: SubscriptionsDeps): Router {
         throw new ApiError(409, 'already_subscribed', 'You already have an active subscription to this studio.');
       }
 
-      // Tasks 16 + 17 replace this placeholder.
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('email, stripe_customer_id')
+        .eq('id', req.user.id)
+        .single();
+      if (profileErr || !profile) throw profileErr ?? new Error('profile not found');
+
+      let customerId = profile.stripe_customer_id;
+      if (!customerId) {
+        try {
+          const customer = await deps.stripe.customers.create({
+            email: profile.email,
+            metadata: { user_id: req.user.id },
+          });
+          customerId = customer.id;
+        } catch (stripeErr) {
+          req.log?.error({ err: stripeErr }, 'stripe customers.create failed');
+          throw new ApiError(502, 'stripe_error', 'Payment provider is temporarily unavailable. Please try again.');
+        }
+        const { error: updProfileErr } = await supabase
+          .from('profiles')
+          .update({ stripe_customer_id: customerId })
+          .eq('id', req.user.id);
+        if (updProfileErr) throw updProfileErr;
+      }
+
+      // Task 17 replaces this placeholder.
       throw new ApiError(500, 'internal', 'checkout session creation not yet implemented');
     } catch (err) {
       next(err);
