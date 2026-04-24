@@ -123,3 +123,11 @@ export async function deleteAllWebhookEventsByPrefix(prefix: string): Promise<vo
     .like('event_id', `${escapeLikePrefix(prefix)}%`);
   if (error) throw error;
 }
+
+export async function deleteAllStripeWebhookEventsByPrefix(prefix: string): Promise<void> {
+  const { error } = await supabase
+    .from('stripe_webhook_events')
+    .delete()
+    .like('event_id', `${escapeLikePrefix(prefix)}%`);
+  if (error) throw error;
+}
