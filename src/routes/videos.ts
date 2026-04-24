@@ -234,7 +234,7 @@ export function createVideosRouter(deps: VideosDeps): Router {
           req.user.id,
           (row as any).studio_id,
         );
-        if (!subscribed) throw new ApiError(403, 'forbidden', 'subscription required');
+        if (!subscribed) throw new ApiError(404, 'not_found', 'video not found');
         if ((row as any).status !== 'ready') throw new ApiError(404, 'not_found', 'video not found');
       }
       const { studios: _omit, ...video } = row as any;

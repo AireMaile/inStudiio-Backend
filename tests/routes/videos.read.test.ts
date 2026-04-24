@@ -120,10 +120,14 @@ describe('GET /videos/:id', () => {
   beforeEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-read-leak-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-read-leak-');
   });
   afterEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-read-leak-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-read-leak-');
     for (const u of users) await deleteTestUser(u.id);
     users.length = 0;
   });
@@ -182,7 +186,7 @@ describe('GET /videos/:id', () => {
     expect(res.status).toBe(200);
   });
 
-  it('non-owner non-subscriber gets 403', async () => {
+  it('non-owner non-subscriber gets 404', async () => {
     const owner = await createTestUser('plan3-vid-owner');
     const intruder = await createTestUser('plan3-vid-intruder');
     users.push(owner, intruder);
@@ -196,7 +200,25 @@ describe('GET /videos/:id', () => {
     const res = await request(app)
       .get(`/videos/${v.id}`)
       .set('Authorization', `Bearer ${signUserToken(intruder)}`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /videos/:id returns 404 (not 403) when caller is non-owner + non-subscriber', async () => {
+    const owner = await createTestUser('plan4-vid-read-owner');
+    const viewer = await createTestUser('plan4-vid-read-viewer');
+    users.push(owner, viewer);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `plan4-vid-read-leak-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'ready' });
+
+    const app = createApp();
+    const res = await request(app)
+      .get(`/videos/${video.id}`)
+      .set('Authorization', `Bearer ${signUserToken(viewer)}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error?.code).toBe('not_found');
   });
 
   it('GET /videos/:id with non-UUID id returns 400 bad_request', async () => {
