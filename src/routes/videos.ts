@@ -123,6 +123,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       await loadOwnedVideo(req.user.id, videoId);
       const parsed = PatchBody.safeParse(req.body);
       if (!parsed.success) {
@@ -151,6 +154,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       const vid = await loadOwnedVideo(req.user.id, videoId);
 
       if (vid.mux_asset_id) {
@@ -208,6 +214,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       const { data: row, error } = await supabase
         .from('videos')
         .select(`${VIDEO_FIELDS}, studios!inner(owner_user_id)`)

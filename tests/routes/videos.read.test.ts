@@ -198,4 +198,15 @@ describe('GET /videos/:id', () => {
       .set('Authorization', `Bearer ${signUserToken(intruder)}`);
     expect(res.status).toBe(403);
   });
+
+  it('GET /videos/:id with non-UUID id returns 400 bad_request', async () => {
+    const user = await createTestUser('plan4-vid-badid');
+    users.push(user);
+    const app = createApp();
+    const res = await request(app)
+      .get('/videos/not-a-uuid')
+      .set('Authorization', `Bearer ${signUserToken(user)}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('bad_request');
+  });
 });
