@@ -97,6 +97,43 @@ export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
     }
   };
 
+  const cancelSubscription: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+      const id = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        throw new ApiError(404, 'subscription_not_found', 'Subscription not found.');
+      }
+
+      const { data: sub, error: subErr } = await supabase
+        .from('subscriptions')
+        .select('id, user_id, status, stripe_subscription_id')
+        .eq('id', id)
+        .maybeSingle();
+      if (subErr) throw subErr;
+      if (!sub || sub.user_id !== req.user.id) {
+        throw new ApiError(404, 'subscription_not_found', 'Subscription not found.');
+      }
+      if (sub.status === 'canceled') {
+        throw new ApiError(409, 'not_cancelable', 'Subscription is already canceled.');
+      }
+
+      try {
+        await deps.stripe.subscriptions.update(sub.stripe_subscription_id, {
+          cancel_at_period_end: true,
+        });
+      } catch (stripeErr) {
+        req.log?.error({ err: stripeErr, subId: sub.id }, 'stripe subscriptions.update failed');
+        throw new ApiError(502, 'stripe_error', 'Payment provider is temporarily unavailable. Please try again.');
+      }
+
+      res.status(200).json({ canceled: true, cancelAtPeriodEnd: true });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   router.post('/', requireAuth, createSubscription);
+  router.delete('/:id', requireAuth, cancelSubscription);
   return router;
 }
