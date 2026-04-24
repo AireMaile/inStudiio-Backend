@@ -85,6 +85,38 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           res.status(200).json({ ok: true });
           return;
         }
+        case 'invoice.payment_succeeded': {
+          const inv = event.data.object as any;
+          if (inv?.billing_reason !== 'subscription_cycle') {
+            logger.info({ eventId: event.id, billingReason: inv?.billing_reason }, 'invoice.payment_succeeded: not subscription_cycle, noop');
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const subId = typeof inv?.subscription === 'string' ? inv.subscription : null;
+          const period = inv?.lines?.data?.[0]?.period;
+          if (!subId || !period?.start || !period?.end) {
+            logger.warn({ eventId: event.id }, 'invoice.payment_succeeded missing fields; noop');
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const { data: updated, error: updateErr } = await supabase
+            .from('subscriptions')
+            .update({
+              status: 'active',
+              current_period_start: new Date(period.start * 1000).toISOString(),
+              current_period_end: new Date(period.end * 1000).toISOString(),
+            })
+            .eq('stripe_subscription_id', subId)
+            .select('id');
+          if (updateErr) throw updateErr;
+          if (!updated || updated.length === 0) {
+            logger.info({ eventId: event.id, subId }, 'invoice.payment_succeeded: no matching sub row, noop');
+            res.status(200).json({ noop: true });
+            return;
+          }
+          res.status(200).json({ ok: true });
+          return;
+        }
         default: {
           logger.info({ eventId: event.id, type: event.type }, 'stripe webhook: unhandled event type');
           res.status(200).json({ noop: true });

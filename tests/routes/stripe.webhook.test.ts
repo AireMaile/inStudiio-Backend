@@ -14,6 +14,7 @@ import { supabase } from '../../src/supabase.js';
 import { createTestUser, deleteTestUser, type TestUser } from '../helpers/testUsers.js';
 import {
   checkoutSessionCompleted,
+  invoicePaymentSucceeded,
 } from '../fixtures/stripeEvents.js';
 
 const SLUG_PREFIX = 'plan4-sub-wh-';
@@ -159,5 +160,60 @@ describe('POST /webhooks/stripe — event handling', () => {
     const res = await postEvent(app, event);
     expect(res.status).toBe(200);
     expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
+  });
+
+  it('invoice.payment_succeeded with billing_reason=subscription_cycle updates period', async () => {
+    const user = await createTestUser('plan4-sub-wh-u');
+    users.push(user);
+    const studio = await insertTestStudio({
+      ownerUserId: user.id,
+      slug: `${SLUG_PREFIX}inv-ok-${Date.now()}`,
+    });
+    const subId = `sub_test_p4wh_${Date.now()}`;
+    const prevStart = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+    const prevEnd = new Date().toISOString();
+    await supabase.from('subscriptions').insert({
+      user_id: user.id,
+      studio_id: studio.id,
+      stripe_subscription_id: subId,
+      stripe_customer_id: `cus_test_p4wh_${Date.now()}`,
+      status: 'active',
+      current_period_start: prevStart,
+      current_period_end: prevEnd,
+      cancel_at_period_end: false,
+    });
+
+    const newStart = Math.floor(Date.now() / 1000);
+    const newEnd = newStart + 30 * 86400;
+    const stripe = makeStripeMock();
+    const event = invoicePaymentSucceeded({
+      subId,
+      billingReason: 'subscription_cycle',
+      periodStart: newStart,
+      periodEnd: newEnd,
+    });
+
+    const app = createApp({ stripe });
+    const res = await postEvent(app, event);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('subscriptions')
+      .select('status, current_period_end')
+      .eq('stripe_subscription_id', subId)
+      .single();
+    expect(data?.status).toBe('active');
+    expect(new Date(data!.current_period_end).getTime()).toBe(newEnd * 1000);
+  });
+
+  it('invoice.payment_succeeded with billing_reason=subscription_create is a noop', async () => {
+    const stripe = makeStripeMock();
+    const event = invoicePaymentSucceeded({
+      subId: `sub_test_p4wh_doesnt_matter_${Date.now()}`,
+      billingReason: 'subscription_create',
+    });
+    const app = createApp({ stripe });
+    const res = await postEvent(app, event);
+    expect(res.status).toBe(200);
   });
 });
