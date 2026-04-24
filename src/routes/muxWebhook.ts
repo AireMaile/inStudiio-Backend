@@ -45,7 +45,7 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       .from('mux_webhook_events')
       .insert({ event_id: event.id, event_type: event.type })
       .select('event_id')
-      .maybeSingle();
+      .single();
     if (ledgerErr) {
       // Unique-violation on event_id means "already processed" — treat as success.
       if ((ledgerErr as any).code === '23505') {
@@ -58,8 +58,8 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       return;
     }
     if (!ledger) {
-      logger.info({ eventId: event.id }, 'mux webhook duplicate (no ledger row returned), skipping');
-      res.status(200).json({ duplicate: true });
+      logger.error({ eventId: event.id }, 'mux webhook ledger insert returned no row');
+      res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
       return;
     }
 
