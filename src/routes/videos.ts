@@ -85,7 +85,10 @@ export function createVideosRouter(deps: VideosDeps): Router {
       if (insertErr || !inserted) throw insertErr ?? new Error('videos insert returned no row');
 
       // 2. Create Mux direct upload.
-      const corsOrigin = env.APP_ORIGIN ?? '*';
+      const corsOrigin = env.APP_ORIGIN ?? (env.NODE_ENV === 'production' ? null : '*');
+      if (!corsOrigin) {
+        throw new ApiError(500, 'internal', 'APP_ORIGIN is required in production');
+      }
       let upload: { id: string; url: string };
       try {
         upload = (await deps.mux.video.uploads.create({
@@ -123,6 +126,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       await loadOwnedVideo(req.user.id, videoId);
       const parsed = PatchBody.safeParse(req.body);
       if (!parsed.success) {
@@ -151,6 +157,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       const vid = await loadOwnedVideo(req.user.id, videoId);
 
       if (vid.mux_asset_id) {
@@ -175,6 +184,18 @@ export function createVideosRouter(deps: VideosDeps): Router {
   const listVideos: RequestHandler = async (req, res, next) => {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+
+      const rawLimit = req.query.limit;
+      let limit = 20;
+      if (rawLimit !== undefined) {
+        const n = Number(rawLimit);
+        if (!Number.isInteger(n) || n < 1 || n > 100) {
+          throw new ApiError(400, 'bad_request', 'limit must be an integer between 1 and 100');
+        }
+        limit = n;
+      }
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+
       const slug = String(req.params.slug ?? '');
       const { data: studio, error: studioErr } = await supabase
         .from('studios')
@@ -194,11 +215,15 @@ export function createVideosRouter(deps: VideosDeps): Router {
         .from('videos')
         .select(VIDEO_FIELDS)
         .eq('studio_id', studio.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(limit);
       if (!isOwner) q = q.eq('status', 'ready');
+      if (cursor) q = q.lt('created_at', cursor);
       const { data, error } = await q;
       if (error) throw error;
-      res.status(200).json({ videos: data ?? [] });
+      const rows = data ?? [];
+      const nextCursor = rows.length === limit ? rows[rows.length - 1].created_at : null;
+      res.status(200).json({ videos: rows, nextCursor });
     } catch (err) {
       next(err);
     }
@@ -208,6 +233,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
     try {
       if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
       const videoId = String(req.params.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId)) {
+        throw new ApiError(400, 'bad_request', 'invalid video id');
+      }
       const { data: row, error } = await supabase
         .from('videos')
         .select(`${VIDEO_FIELDS}, studios!inner(owner_user_id)`)
@@ -225,7 +253,7 @@ export function createVideosRouter(deps: VideosDeps): Router {
           req.user.id,
           (row as any).studio_id,
         );
-        if (!subscribed) throw new ApiError(403, 'forbidden', 'subscription required');
+        if (!subscribed) throw new ApiError(404, 'not_found', 'video not found');
         if ((row as any).status !== 'ready') throw new ApiError(404, 'not_found', 'video not found');
       }
       const { studios: _omit, ...video } = row as any;

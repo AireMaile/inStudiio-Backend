@@ -29,10 +29,14 @@ describe('GET /studios/:slug/videos', () => {
   beforeEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-page-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-page-');
   });
   afterEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-page-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-page-');
     for (const u of users) await deleteTestUser(u.id);
     users.length = 0;
   });
@@ -113,6 +117,69 @@ describe('GET /studios/:slug/videos', () => {
       .set('Authorization', `Bearer ${signUserToken(viewer)}`);
     expect(res.status).toBe(404);
   });
+
+  it('GET /studios/:slug/videos respects limit', async () => {
+    const owner = await createTestUser('plan4-vid-page-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `plan4-vid-page-limit-${Date.now()}`,
+    });
+    for (let i = 0; i < 5; i++) {
+      await insertTestVideo({ studioId: studio.id, status: 'ready' });
+    }
+    const app = createApp();
+    const res = await request(app)
+      .get(`/studios/${studio.slug}/videos?limit=3`)
+      .set('Authorization', `Bearer ${signUserToken(owner)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.videos.length).toBe(3);
+    expect(typeof res.body.nextCursor).toBe('string');
+  });
+
+  it('GET /studios/:slug/videos respects cursor for next page', async () => {
+    const owner = await createTestUser('plan4-vid-page-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `plan4-vid-page-cursor-${Date.now()}`,
+    });
+    for (let i = 0; i < 4; i++) {
+      await insertTestVideo({ studioId: studio.id, status: 'ready' });
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const app = createApp();
+    const page1 = await request(app)
+      .get(`/studios/${studio.slug}/videos?limit=2`)
+      .set('Authorization', `Bearer ${signUserToken(owner)}`);
+    expect(page1.status).toBe(200);
+    expect(page1.body.videos.length).toBe(2);
+    const cursor = page1.body.nextCursor;
+
+    const page2 = await request(app)
+      .get(`/studios/${studio.slug}/videos?limit=2&cursor=${encodeURIComponent(cursor)}`)
+      .set('Authorization', `Bearer ${signUserToken(owner)}`);
+    expect(page2.status).toBe(200);
+    expect(page2.body.videos.length).toBe(2);
+    const page1Ids = page1.body.videos.map((v: any) => v.id);
+    const page2Ids = page2.body.videos.map((v: any) => v.id);
+    for (const id of page2Ids) expect(page1Ids).not.toContain(id);
+  });
+
+  it('GET /studios/:slug/videos caps limit to 100', async () => {
+    const owner = await createTestUser('plan4-vid-page-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `plan4-vid-page-cap-${Date.now()}`,
+    });
+    const app = createApp();
+    const res = await request(app)
+      .get(`/studios/${studio.slug}/videos?limit=9999`)
+      .set('Authorization', `Bearer ${signUserToken(owner)}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('bad_request');
+  });
 });
 
 describe('GET /videos/:id', () => {
@@ -120,10 +187,14 @@ describe('GET /videos/:id', () => {
   beforeEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-read-leak-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-read-leak-');
   });
   afterEach(async () => {
     await deleteTestVideosByStudioPrefix(SLUG_PREFIX);
     await deleteTestStudiosBySlugPrefix(SLUG_PREFIX);
+    await deleteTestVideosByStudioPrefix('plan4-vid-read-leak-');
+    await deleteTestStudiosBySlugPrefix('plan4-vid-read-leak-');
     for (const u of users) await deleteTestUser(u.id);
     users.length = 0;
   });
@@ -182,7 +253,7 @@ describe('GET /videos/:id', () => {
     expect(res.status).toBe(200);
   });
 
-  it('non-owner non-subscriber gets 403', async () => {
+  it('non-owner non-subscriber gets 404', async () => {
     const owner = await createTestUser('plan3-vid-owner');
     const intruder = await createTestUser('plan3-vid-intruder');
     users.push(owner, intruder);
@@ -196,6 +267,35 @@ describe('GET /videos/:id', () => {
     const res = await request(app)
       .get(`/videos/${v.id}`)
       .set('Authorization', `Bearer ${signUserToken(intruder)}`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /videos/:id returns 404 (not 403) when caller is non-owner + non-subscriber', async () => {
+    const owner = await createTestUser('plan4-vid-read-owner');
+    const viewer = await createTestUser('plan4-vid-read-viewer');
+    users.push(owner, viewer);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `plan4-vid-read-leak-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'ready' });
+
+    const app = createApp();
+    const res = await request(app)
+      .get(`/videos/${video.id}`)
+      .set('Authorization', `Bearer ${signUserToken(viewer)}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error?.code).toBe('not_found');
+  });
+
+  it('GET /videos/:id with non-UUID id returns 400 bad_request', async () => {
+    const user = await createTestUser('plan4-vid-badid');
+    users.push(user);
+    const app = createApp();
+    const res = await request(app)
+      .get('/videos/not-a-uuid')
+      .set('Authorization', `Bearer ${signUserToken(user)}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('bad_request');
   });
 });
