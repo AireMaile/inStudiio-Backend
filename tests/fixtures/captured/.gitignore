@@ -1,0 +1,4 @@
+# Ignore timestamped uncurated captures. Curated captures (no timestamp suffix)
+# are committed; e.g. `checkout.session.completed.json` is committed but
+# `checkout.session.completed.1761480000000.json` is not.
+*.[0-9]*.json
