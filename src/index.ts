@@ -13,11 +13,11 @@ import { createSubscribePagesRouter } from './routes/subscribePages.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 import { stripe as defaultStripe } from './stripe.js';
-import type Stripe from 'stripe';
+import type { StripeDeps } from './types/stripeDeps.js';
 
 export interface AppDeps {
   mux?: Pick<MuxClient, 'video' | 'webhooks'>;
-  stripe?: Pick<Stripe, 'checkout' | 'subscriptions' | 'customers' | 'webhooks'>;
+  stripe?: StripeDeps;
 }
 
 export function createApp(deps: AppDeps = {}): Express {

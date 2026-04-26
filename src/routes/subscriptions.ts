@@ -1,16 +1,16 @@
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
-import type Stripe from 'stripe';
 import { supabase } from '../supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
 import { env } from '../env.js';
+import type { StripeDeps } from '../types/stripeDeps.js';
 
 const CreateBody = z.object({ studioId: z.string().uuid() });
 const BLOCKING_STATUSES = new Set(['active', 'past_due', 'incomplete']);
 
 export interface SubscriptionsDeps {
-  stripe: Pick<Stripe, 'checkout' | 'customers' | 'subscriptions'>;
+  stripe: Pick<StripeDeps, 'checkout' | 'customers' | 'subscriptions'>;
 }
 
 export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {

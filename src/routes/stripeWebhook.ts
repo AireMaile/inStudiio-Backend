@@ -3,9 +3,10 @@ import type Stripe from 'stripe';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
+import type { StripeDeps } from '../types/stripeDeps.js';
 
 export interface StripeWebhookDeps {
-  stripe: Pick<Stripe, 'webhooks' | 'subscriptions'>;
+  stripe: Pick<StripeDeps, 'webhooks' | 'subscriptions'>;
 }
 
 export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
