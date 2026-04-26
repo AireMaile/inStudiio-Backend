@@ -10,7 +10,6 @@ import { createMuxWebhookRouter } from './routes/muxWebhook.js';
 import { createStripeWebhookRouter } from './routes/stripeWebhook.js';
 import { createSubscriptionsRouter } from './routes/subscriptions.js';
 import { createSubscribePagesRouter } from './routes/subscribePages.js';
-import { createStripeCaptureDevRouter } from './routes/stripeCaptureDev.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 import { stripe as defaultStripe } from './stripe.js';
@@ -41,19 +40,6 @@ export function createApp(deps: AppDeps = {}): Express {
     express.raw({ type: 'application/json' }),
     createStripeWebhookRouter({ stripe }),
   );
-
-  // DEV-ONLY: capture raw Stripe webhook deliveries to disk for fixture
-  // generation. Gated on STRIPE_CAPTURE_ENABLED so it cannot accidentally
-  // ship to production. Plan 5 §3 Step 1; remove before opening the
-  // implementation PR. See src/routes/stripeCaptureDev.ts for the runbook.
-  if (process.env.STRIPE_CAPTURE_ENABLED === 'true' && env.NODE_ENV !== 'production') {
-    app.use(
-      '/webhooks/stripe-capture',
-      express.raw({ type: 'application/json' }),
-      createStripeCaptureDevRouter(),
-    );
-    logger.warn('STRIPE_CAPTURE_ENABLED=true — /webhooks/stripe-capture mounted (dev only)');
-  }
 
   app.use(express.json());
   app.use('/health', healthRouter);
