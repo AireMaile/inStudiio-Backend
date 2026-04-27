@@ -6,14 +6,19 @@ import type Stripe from 'stripe';
  * Pick<Stripe, 'checkout' | 'subscriptions' | 'customers' | 'webhooks'>
  * which forced test mocks to implement entire nested resource objects.
  *
- * Anchored to Stripe's own resource method types so we don't drift; narrowed
- * to the specific methods used so mocks can be honest.
+ * Anchored to Stripe SDK 22's own resource method types so we don't drift;
+ * narrowed to the specific methods used so mocks can be honest.
+ *
+ * Note: Stripe SDK 22 uses singular resource names (SessionResource,
+ * CustomerResource, SubscriptionResource). Webhooks is a property type
+ * on the Stripe instance, not a namespace export, so we Pick from
+ * Stripe['webhooks'].
  */
 export interface StripeDeps {
   checkout: {
-    sessions: Pick<Stripe.Checkout.SessionsResource, 'create'>;
+    sessions: Pick<Stripe.Checkout.SessionResource, 'create'>;
   };
-  customers: Pick<Stripe.CustomersResource, 'create'>;
-  subscriptions: Pick<Stripe.SubscriptionsResource, 'retrieve' | 'update'>;
-  webhooks: Pick<Stripe.Webhooks, 'constructEvent'>;
+  customers: Pick<Stripe.CustomerResource, 'create'>;
+  subscriptions: Pick<Stripe.SubscriptionResource, 'retrieve' | 'update'>;
+  webhooks: Pick<Stripe['webhooks'], 'constructEvent'>;
 }
