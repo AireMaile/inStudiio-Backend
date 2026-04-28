@@ -9,6 +9,7 @@ import {
   insertTestSubscription,
   deleteTestStudiosBySlugPrefix,
 } from '../helpers/testData.js';
+import { customerSubscriptionUpdated } from '../fixtures/stripeEvents.js';
 
 const SLUG_PREFIX = 'plan4-sub-cancel-';
 
@@ -127,6 +128,75 @@ describe('DELETE /subscriptions/:id', () => {
       .set('Authorization', `Bearer ${signUserToken(user)}`);
     expect(res.status).toBe(409);
     expect(res.body.error?.code).toBe('not_cancelable');
+  });
+
+  it('cancel + subsequent customer.subscription.updated webhook reconciles', async () => {
+    // Plan 5 PR-action-item: verify the full cancel reconciliation loop.
+    // 1) DELETE flips cancel_at_period_end optimistically
+    // 2) Stripe sends customer.subscription.updated → handler updates
+    //    status + period from the webhook payload
+    // 3) Final row reflects the webhook-authoritative state
+    const owner = await createTestUser('plan4-sub-cancel-owner');
+    const user = await createTestUser('plan4-sub-cancel-u');
+    users.push(owner, user);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}reconcile-${Date.now()}`,
+    });
+    const stripeSubId = `sub_test_p4x_reconcile_${Date.now()}`;
+    const subRow = await insertTestSubscription({
+      userId: user.id,
+      studioId: studio.id,
+      status: 'active',
+      stripeSubId,
+    });
+
+    const stripe = makeStripeMock();
+    const app = createApp({ stripe });
+
+    // Step 1: cancel
+    const cancelRes = await request(app)
+      .delete(`/subscriptions/${subRow.id}`)
+      .set('Authorization', `Bearer ${signUserToken(user)}`);
+    expect(cancelRes.status).toBe(200);
+
+    const { data: afterCancel } = await supabase
+      .from('subscriptions')
+      .select('status, cancel_at_period_end')
+      .eq('id', subRow.id)
+      .single();
+    expect(afterCancel?.cancel_at_period_end).toBe(true);
+    expect(afterCancel?.status).toBe('active');
+
+    // Step 2: replay the customer.subscription.updated webhook Stripe sends
+    // after we call subscriptions.update(). Builder derives from a captured
+    // payload; we override the subId and the test-controlled fields only.
+    const event = customerSubscriptionUpdated({
+      subId: stripeSubId,
+      status: 'active',
+      cancelAtPeriodEnd: true,
+    });
+    const webhookRes = await request(app)
+      .post('/webhooks/stripe')
+      .set('Content-Type', 'application/json')
+      .set('Stripe-Signature', 't=0,v1=dummy')
+      .send(JSON.stringify(event));
+    expect(webhookRes.status).toBe(200);
+
+    // Step 3: row reflects webhook-authoritative state. The optimistic
+    // cancel_at_period_end stays true; status/period come from the webhook.
+    const { data: afterWebhook } = await supabase
+      .from('subscriptions')
+      .select('status, cancel_at_period_end, current_period_start, current_period_end')
+      .eq('id', subRow.id)
+      .single();
+    expect(afterWebhook?.cancel_at_period_end).toBe(true);
+    expect(afterWebhook?.status).toBe('active');
+    expect(afterWebhook?.current_period_start).toBeTruthy();
+    expect(afterWebhook?.current_period_end).toBeTruthy();
+
+    // Cleanup webhook ledger so suite reruns cleanly.
+    await supabase.from('stripe_webhook_events').delete().eq('event_id', event.id);
   });
 
   it('502 stripe_error when Stripe throws', async () => {
