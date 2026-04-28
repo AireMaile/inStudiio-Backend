@@ -27,13 +27,32 @@ describe('Stripe fixture builders match captured shapes', () => {
     expect(builtKeys, `builder for ${eventType} drifted from captured keys`).toEqual(capturedKeys);
   }
 
+  // Path-level assertion. Top-level key match is necessary but not sufficient
+  // — the Plan 5 drift was nested (`current_period_start` moved into
+  // `items.data[0]`), and a top-level keys check would not have caught a
+  // builder that dropped that nested field. These assertions pin the exact
+  // JSON paths the production handlers in src/routes/stripeWebhook.ts read.
+  function expectPathPresent(obj: unknown, path: string, label: string): void {
+    const parts = path.split('.');
+    let cur: any = obj;
+    for (const p of parts) {
+      const idx = /^\d+$/.test(p) ? Number(p) : p;
+      if (cur == null) {
+        throw new Error(`${label}: path "${path}" walked through a null at "${p}"`);
+      }
+      cur = cur[idx as any];
+    }
+    expect(cur, `${label}: path "${path}" must be present and not null`).not.toBeNull();
+    expect(cur, `${label}: path "${path}" must be defined`).toBeDefined();
+  }
+
   it('checkoutSessionCompleted preserves the captured top-level keys', () => {
     const { event } = loadCapture('checkout.session.completed');
     const built = checkoutSessionCompleted({ userId: 'u', studioId: 's' });
     expectKeysMatch(built.data.object, event.data.object, 'checkout.session.completed');
   });
 
-  it('customerSubscriptionUpdated preserves captured top-level keys', () => {
+  it('customerSubscriptionUpdated preserves captured top-level keys + nested period paths', () => {
     const { event } = loadCapture('customer.subscription.updated');
     const built = customerSubscriptionUpdated({
       subId: 'sub_x',
@@ -41,6 +60,8 @@ describe('Stripe fixture builders match captured shapes', () => {
       cancelAtPeriodEnd: true,
     });
     expectKeysMatch(built.data.object, event.data.object, 'customer.subscription.updated');
+    expectPathPresent(built.data.object, 'items.data.0.current_period_start', 'subscription.updated builder');
+    expectPathPresent(built.data.object, 'items.data.0.current_period_end', 'subscription.updated builder');
   });
 
   it('customerSubscriptionDeleted preserves captured top-level keys', () => {
@@ -49,15 +70,19 @@ describe('Stripe fixture builders match captured shapes', () => {
     expectKeysMatch(built.data.object, event.data.object, 'customer.subscription.deleted');
   });
 
-  it('invoicePaymentSucceeded preserves captured top-level keys', () => {
+  it('invoicePaymentSucceeded preserves captured top-level keys + nested sub-id and period paths', () => {
     const { event } = loadCapture('invoice.payment_succeeded');
     const built = invoicePaymentSucceeded({ subId: 'sub_x', billingReason: 'subscription_cycle' });
     expectKeysMatch(built.data.object, event.data.object, 'invoice.payment_succeeded');
+    expectPathPresent(built.data.object, 'parent.subscription_details.subscription', 'invoice.payment_succeeded builder');
+    expectPathPresent(built.data.object, 'lines.data.0.period.start', 'invoice.payment_succeeded builder');
+    expectPathPresent(built.data.object, 'lines.data.0.period.end', 'invoice.payment_succeeded builder');
   });
 
-  it('invoicePaymentFailed preserves captured top-level keys', () => {
+  it('invoicePaymentFailed preserves captured top-level keys + nested sub-id path', () => {
     const { event } = loadCapture('invoice.payment_failed');
     const built = invoicePaymentFailed({ subId: 'sub_x' });
     expectKeysMatch(built.data.object, event.data.object, 'invoice.payment_failed');
+    expectPathPresent(built.data.object, 'parent.subscription_details.subscription', 'invoice.payment_failed builder');
   });
 });

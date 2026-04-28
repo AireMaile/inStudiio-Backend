@@ -17,6 +17,15 @@ import { supabase } from '../src/supabase.js';
 import { env } from '../src/env.js';
 
 async function main(): Promise<void> {
+  // Production guard: this script uses the service-role Supabase client and
+  // signs JWTs; if SUPABASE_URL ever points at prod (mix-up or otherwise)
+  // it would mint a real subscriber there. Refuse early.
+  if (env.NODE_ENV === 'production' || /prod/i.test(env.SUPABASE_URL)) {
+    console.error('refusing to run mint-test-subscriber: production env detected');
+    console.error(`  NODE_ENV=${env.NODE_ENV}  SUPABASE_URL=${env.SUPABASE_URL}`);
+    process.exit(1);
+  }
+
   const { values } = parseArgs({
     options: {
       'studio-slug': { type: 'string' },

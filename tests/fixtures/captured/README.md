@@ -104,3 +104,12 @@ The implementation plan written against these captures will:
 These are testmode-only. Test customers, test cards, fake metadata. No production data. Signing secrets are NOT in the capture body — the `Stripe-Signature` header carries an HMAC, not the secret itself. Safe to commit.
 
 If you accidentally capture against live Stripe — stop, delete the captures, rotate any exposed keys, and only re-capture against testmode.
+
+### Redaction policy for `metadata.user_id` / `metadata.studio_id`
+
+The captured payloads contain real-looking UUIDs in `metadata.user_id` and `metadata.studio_id`. These are **local-only** Supabase auth ids and studio ids — they map to rows in a developer's local DB and grant no access to staging or production. They are not secrets.
+
+That said:
+- **Do not capture against staging or shared environments** without redacting these fields first.
+- Builders in `tests/fixtures/stripeEvents.ts` override these fields via `structuredClone` — tests never depend on the captured UUIDs, only on the shape. Recapturing with synthetic UUIDs is safe.
+- Stripe ids (`sub_*`, `cus_*`, `cs_*`, `evt_*`) are testmode-only by definition and are safe to commit.
