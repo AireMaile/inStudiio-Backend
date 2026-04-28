@@ -25,7 +25,7 @@ describe('DELETE /subscriptions/:id', () => {
     users.length = 0;
   });
 
-  it('200 calls Stripe with cancel_at_period_end:true; DB unchanged', async () => {
+  it('200 calls Stripe with cancel_at_period_end:true; optimistic local write flips cancel_at_period_end (status untouched)', async () => {
     const owner = await createTestUser('plan4-sub-cancel-owner');
     const user = await createTestUser('plan4-sub-cancel-u');
     users.push(owner, user);
@@ -58,7 +58,7 @@ describe('DELETE /subscriptions/:id', () => {
       .select('cancel_at_period_end, status')
       .eq('id', subRow.id)
       .single();
-    expect(data?.cancel_at_period_end).toBe(false);
+    expect(data?.cancel_at_period_end).toBe(true);
     expect(data?.status).toBe('active');
   });
 
