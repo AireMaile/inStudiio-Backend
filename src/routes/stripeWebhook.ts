@@ -9,6 +9,36 @@ export interface StripeWebhookDeps {
   stripe: Pick<StripeDeps, 'webhooks' | 'subscriptions'>;
 }
 
+// Read-policy (Plan 5 §billing-contract):
+//   checkout.session.completed → user_id/studio_id from Session metadata first,
+//     fall back to retrieved Subscription metadata (defensive: empty Session
+//     metadata observed in capture when only subscription_data.metadata was set
+//     pre-Plan-5; dual write fixes this going forward).
+//   invoice.* → subscription id at parent.subscription_details.subscription
+//     (Stripe API 2026-03-25.dahlia moved it off the top-level field).
+//   customer.subscription.* → period at items.data[0].current_period_* (same
+//     migration; top-level current_period_* is null on this API version).
+
+function readSubMetadata(o: any): { userId: string | null; studioId: string | null } {
+  const m = o?.metadata ?? {};
+  return {
+    userId: typeof m.user_id === 'string' ? m.user_id : null,
+    studioId: typeof m.studio_id === 'string' ? m.studio_id : null,
+  };
+}
+
+function readSubPeriod(sub: any): { start: number | null; end: number | null } {
+  const item = sub?.items?.data?.[0];
+  const start = typeof item?.current_period_start === 'number' ? item.current_period_start : null;
+  const end = typeof item?.current_period_end === 'number' ? item.current_period_end : null;
+  return { start, end };
+}
+
+function readInvoiceSubId(inv: any): string | null {
+  const v = inv?.parent?.subscription_details?.subscription;
+  return typeof v === 'string' ? v : null;
+}
+
 export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
   const router = Router();
 
@@ -30,7 +60,6 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
       return;
     }
 
-    // Idempotency: try to record event_id. Duplicate → short-circuit.
     const { data: ledger, error: ledgerErr } = await supabase
       .from('stripe_webhook_events')
       .insert({ event_id: event.id, event_type: event.type })
@@ -56,17 +85,32 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
       switch (event.type) {
         case 'checkout.session.completed': {
           const session = event.data.object as any;
-          const meta = session?.metadata ?? {};
-          const userId = typeof meta.user_id === 'string' ? meta.user_id : null;
-          const studioId = typeof meta.studio_id === 'string' ? meta.studio_id : null;
           const subId = typeof session?.subscription === 'string' ? session.subscription : null;
           const custId = typeof session?.customer === 'string' ? session.customer : null;
-          if (!userId || !studioId || !subId || !custId) {
-            logger.warn({ eventId: event.id }, 'checkout.session.completed missing metadata/ids; noop');
+          if (!subId || !custId) {
+            logger.warn({ eventId: event.id }, 'checkout.session.completed missing sub/customer; noop');
             res.status(200).json({ noop: true });
             return;
           }
+          // Read-policy: prefer Session metadata, fall back to Subscription metadata.
+          let { userId, studioId } = readSubMetadata(session);
           const sub = (await deps.stripe.subscriptions.retrieve(subId)) as any;
+          if (!userId || !studioId) {
+            const fromSub = readSubMetadata(sub);
+            userId = userId ?? fromSub.userId;
+            studioId = studioId ?? fromSub.studioId;
+          }
+          if (!userId || !studioId) {
+            logger.warn({ eventId: event.id, subId }, 'checkout.session.completed missing metadata on session AND subscription; noop');
+            res.status(200).json({ noop: true });
+            return;
+          }
+          const { start, end } = readSubPeriod(sub);
+          if (start === null || end === null) {
+            // Per Plan 5 round-2 correction: missing period is a contract failure,
+            // not a noop. Throwing rolls back the ledger and lets Stripe retry.
+            throw new Error(`subscription ${subId} missing items.data[0].current_period_*`);
+          }
           const { error: upsertErr } = await supabase
             .from('subscriptions')
             .upsert(
@@ -76,9 +120,9 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
                 stripe_subscription_id: subId,
                 stripe_customer_id: custId,
                 status: sub.status,
-                current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
-                current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-                cancel_at_period_end: sub.cancel_at_period_end,
+                current_period_start: new Date(start * 1000).toISOString(),
+                current_period_end: new Date(end * 1000).toISOString(),
+                cancel_at_period_end: !!sub.cancel_at_period_end,
               },
               { onConflict: 'user_id,studio_id' },
             );
@@ -89,11 +133,14 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
         case 'invoice.payment_succeeded': {
           const inv = event.data.object as any;
           if (inv?.billing_reason !== 'subscription_cycle') {
-            logger.info({ eventId: event.id, billingReason: inv?.billing_reason }, 'invoice.payment_succeeded: not subscription_cycle, noop');
+            logger.info(
+              { eventId: event.id, billingReason: inv?.billing_reason },
+              'invoice.payment_succeeded: not subscription_cycle, noop',
+            );
             res.status(200).json({ noop: true });
             return;
           }
-          const subId = typeof inv?.subscription === 'string' ? inv.subscription : null;
+          const subId = readInvoiceSubId(inv);
           const period = inv?.lines?.data?.[0]?.period;
           if (!subId || !period?.start || !period?.end) {
             logger.warn({ eventId: event.id }, 'invoice.payment_succeeded missing fields; noop');
@@ -111,7 +158,10 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
             .select('id');
           if (updateErr) throw updateErr;
           if (!updated || updated.length === 0) {
-            logger.info({ eventId: event.id, subId }, 'invoice.payment_succeeded: no matching sub row, noop');
+            logger.warn(
+              { eventId: event.id, subId },
+              'invoice.payment_succeeded: no matching sub row (race or orphan)',
+            );
             res.status(200).json({ noop: true });
             return;
           }
@@ -120,8 +170,9 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
         }
         case 'invoice.payment_failed': {
           const inv = event.data.object as any;
-          const subId = typeof inv?.subscription === 'string' ? inv.subscription : null;
+          const subId = readInvoiceSubId(inv);
           if (!subId) {
+            logger.warn({ eventId: event.id }, 'invoice.payment_failed missing subscription id; noop');
             res.status(200).json({ noop: true });
             return;
           }
@@ -132,6 +183,10 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
             .select('id');
           if (updateErr) throw updateErr;
           if (!updated || updated.length === 0) {
+            logger.warn(
+              { eventId: event.id, subId },
+              'invoice.payment_failed: no matching sub row (race or orphan)',
+            );
             res.status(200).json({ noop: true });
             return;
           }
@@ -145,18 +200,24 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
             res.status(200).json({ noop: true });
             return;
           }
+          const { start, end } = readSubPeriod(sub);
+          const update = {
+            status: sub.status,
+            cancel_at_period_end: !!sub.cancel_at_period_end,
+            ...(start !== null ? { current_period_start: new Date(start * 1000).toISOString() } : {}),
+            ...(end !== null ? { current_period_end: new Date(end * 1000).toISOString() } : {}),
+          };
           const { data: updated, error: updateErr } = await supabase
             .from('subscriptions')
-            .update({
-              status: sub.status,
-              cancel_at_period_end: !!sub.cancel_at_period_end,
-              current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
-              current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-            })
+            .update(update)
             .eq('stripe_subscription_id', subId)
             .select('id');
           if (updateErr) throw updateErr;
           if (!updated || updated.length === 0) {
+            logger.warn(
+              { eventId: event.id, subId },
+              'customer.subscription.updated: no matching sub row (race or orphan)',
+            );
             res.status(200).json({ noop: true });
             return;
           }
@@ -177,6 +238,10 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
             .select('id');
           if (updateErr) throw updateErr;
           if (!updated || updated.length === 0) {
+            logger.warn(
+              { eventId: event.id, subId },
+              'customer.subscription.deleted: no matching sub row (race or orphan)',
+            );
             res.status(200).json({ noop: true });
             return;
           }
@@ -190,7 +255,6 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
         }
       }
     } catch (err) {
-      // Roll back the ledger so Stripe's retry reprocesses instead of short-circuiting.
       await supabase.from('stripe_webhook_events').delete().eq('event_id', event.id);
       logger.error({ err, eventId: event.id, type: event.type }, 'stripe webhook handler failed; ledger rolled back');
       res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
