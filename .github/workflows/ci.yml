@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Plan 5 P0.2: this is the merge gate. typecheck must pass for any PR
+  # to merge into main. Configure branch protection on `main` to require
+  # this job before merging.
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version is taken from package.json's "packageManager" field;
+      # specifying it here too triggers ERR_PNPM_BAD_PM_VERSION.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm typecheck
+        run: pnpm typecheck
+
+  # Tests are deferred to local + manual verification for now because they
+  # require a running Supabase instance and Stripe testmode credentials.
+  # When integration secrets land in repo settings, add a `test` job here
+  # ordered AFTER `typecheck` and require both for branch protection.
+  #
+  # See ClaudeBrain/Plans/2026-04-26-instudiio-plan-5-mvp-hardening-impl.md
+  # Task 5 for the rationale and the upgrade path.

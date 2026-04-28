@@ -113,12 +113,15 @@ describe('POST /webhooks/stripe — event handling', () => {
     const stripe = makeStripeMock();
     const subId = `sub_test_p4wh_${Date.now()}`;
     const custId = `cus_test_p4wh_${Date.now()}`;
+    const periodStart = Math.floor(Date.now() / 1000);
+    const periodEnd = periodStart + 30 * 86400;
     stripe.subscriptions.retrieve.mockResolvedValueOnce({
       id: subId,
       status: 'active',
       cancel_at_period_end: false,
-      current_period_start: Math.floor(Date.now() / 1000),
-      current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+      items: {
+        data: [{ current_period_start: periodStart, current_period_end: periodEnd }],
+      },
     });
 
     const event = checkoutSessionCompleted({
@@ -145,8 +148,10 @@ describe('POST /webhooks/stripe — event handling', () => {
     expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith(subId);
   });
 
-  it('checkout.session.completed with missing metadata is a 200 noop', async () => {
+  it('checkout.session.completed with missing metadata on session AND subscription is a 200 noop', async () => {
     const stripe = makeStripeMock();
+    // Default mock subscription has no metadata; with session metadata also
+    // null, the fallback should fail and the handler should noop.
     const event = {
       id: `${EVENT_PREFIX}cs_nometa_${Date.now()}`,
       type: 'checkout.session.completed',
@@ -162,7 +167,7 @@ describe('POST /webhooks/stripe — event handling', () => {
     const app = createApp({ stripe });
     const res = await postEvent(app, event);
     expect(res.status).toBe(200);
-    expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
+    expect(res.body).toMatchObject({ noop: true });
   });
 
   it('invoice.payment_succeeded with billing_reason=subscription_cycle updates period', async () => {

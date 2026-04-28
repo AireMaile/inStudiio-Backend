@@ -1,17 +1,39 @@
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
+import type { StripeDeps } from '../../src/types/stripeDeps.js';
 
 /**
- * Returns a Stripe-shaped object with vi.fn() stubs for every method we call.
- * Individual tests override return values via `mock.checkout.sessions.create.mockResolvedValueOnce(...)`.
- * By default:
+ * Stripe mock factory whose return type satisfies `StripeDeps` (the narrow
+ * production dependency surface defined in src/types/stripeDeps.ts).
+ *
+ * Plan 5 P0.2: previously the mock did not satisfy the broader
+ * `Pick<Stripe, ...>` surface and `pnpm typecheck` failed. With StripeDeps
+ * narrowed to method-level Pick, this mock satisfies it via structural
+ * typing — the `_stripeDepsConformance` line at the bottom is the
+ * compile-time gate that proves it.
+ *
+ * Tests use the standard vi.Mock API (`mockResolvedValueOnce`,
+ * `toHaveBeenCalledWith`, etc.) and pass loose object literals as return
+ * values without strict Stripe.Response typing.
+ *
+ * Defaults:
  *   - checkout.sessions.create returns a session with a fake URL
  *   - customers.create returns a fake customer
  *   - subscriptions.update returns with cancel_at_period_end: true
- *   - subscriptions.retrieve returns a minimal active subscription
- *   - webhooks.constructEvent parses the raw body as JSON (bypasses signature check).
- *     For signature-verification tests, pass { verifySignatures: true } to require real verification.
+ *   - subscriptions.retrieve returns a minimal active subscription whose
+ *     current_period_* fields live at items.data[0] (Stripe API
+ *     2026-03-25.dahlia layout — see Plan 5 P0.1 capture findings)
+ *   - webhooks.constructEvent parses the raw body as JSON (bypasses
+ *     signature check). Pass { verifySignatures: true } to require real
+ *     verification via the Stripe SDK.
  */
-export function makeStripeMock(opts?: { verifySignatures?: boolean; secret?: string }) {
+export type StripeMock = {
+  checkout: { sessions: { create: Mock } };
+  customers: { create: Mock };
+  subscriptions: { retrieve: Mock; update: Mock };
+  webhooks: { constructEvent: Mock };
+};
+
+export function makeStripeMock(opts?: { verifySignatures?: boolean; secret?: string }): StripeMock {
   const nowSec = Math.floor(Date.now() / 1000);
   return {
     checkout: {
@@ -35,8 +57,13 @@ export function makeStripeMock(opts?: { verifySignatures?: boolean; secret?: str
         id: 'sub_test_mock',
         status: 'active',
         cancel_at_period_end: false,
-        current_period_start: nowSec,
-        current_period_end: nowSec + 30 * 86400,
+        // Plan 5 P0.1: period fields at items[0] in Stripe API 2026-03-25.dahlia
+        items: {
+          data: [{
+            current_period_start: nowSec,
+            current_period_end: nowSec + 30 * 86400,
+          }],
+        },
       }),
     },
     webhooks: {
@@ -54,4 +81,11 @@ export function makeStripeMock(opts?: { verifySignatures?: boolean; secret?: str
   };
 }
 
-export type StripeMock = ReturnType<typeof makeStripeMock>;
+/**
+ * Compile-time gate: the StripeMock structure must be assignable to
+ * StripeDeps. If StripeDeps grows a method or StripeMock drops one, this
+ * line fails to type-check and `pnpm typecheck` fails. This is what makes
+ * Plan 5 P0.2 a real check rather than a vibes claim.
+ */
+const _stripeDepsConformance: StripeDeps = makeStripeMock();
+void _stripeDepsConformance;

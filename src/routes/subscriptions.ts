@@ -1,16 +1,16 @@
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
-import type Stripe from 'stripe';
 import { supabase } from '../supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
 import { env } from '../env.js';
+import type { StripeDeps } from '../types/stripeDeps.js';
 
 const CreateBody = z.object({ studioId: z.string().uuid() });
 const BLOCKING_STATUSES = new Set(['active', 'past_due', 'incomplete']);
 
 export interface SubscriptionsDeps {
-  stripe: Pick<Stripe, 'checkout' | 'customers' | 'subscriptions'>;
+  stripe: Pick<StripeDeps, 'checkout' | 'customers' | 'subscriptions'>;
 }
 
 export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
@@ -73,13 +73,19 @@ export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
       }
 
       const baseUrl = env.APP_ORIGIN ?? `http://localhost:${env.PORT}`;
+      // Write metadata to BOTH the Session (for checkout.session.completed
+      // direct read) AND subscription_data (for downstream subscription.*
+      // events that only carry subscription metadata). See Plan 5
+      // billing-contract: dual write, named read-policy.
+      const checkoutMetadata = { user_id: req.user.id, studio_id: studio.id };
       let session: { url: string | null };
       try {
         session = await deps.stripe.checkout.sessions.create({
           mode: 'subscription',
           customer: customerId,
           line_items: [{ price: studio.stripe_price_id, quantity: 1 }],
-          subscription_data: { metadata: { user_id: req.user.id, studio_id: studio.id } },
+          metadata: checkoutMetadata,
+          subscription_data: { metadata: checkoutMetadata },
           success_url: `${baseUrl}/subscribe/success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${baseUrl}/subscribe/cancel`,
         });
@@ -125,6 +131,21 @@ export function createSubscriptionsRouter(deps: SubscriptionsDeps): Router {
       } catch (stripeErr) {
         req.log?.error({ err: stripeErr, subId: sub.id }, 'stripe subscriptions.update failed');
         throw new ApiError(502, 'stripe_error', 'Payment provider is temporarily unavailable. Please try again.');
+      }
+
+      // Optimistic narrow write: only cancel_at_period_end. The webhook
+      // (customer.subscription.updated) remains authoritative for status,
+      // period, and everything else. If this write fails after Stripe
+      // accepted, log loudly — the webhook will reconcile within seconds.
+      const { error: localUpdErr } = await supabase
+        .from('subscriptions')
+        .update({ cancel_at_period_end: true })
+        .eq('id', sub.id);
+      if (localUpdErr) {
+        req.log?.warn(
+          { err: localUpdErr, subId: sub.id },
+          'cancel optimistic local write failed; webhook will reconcile',
+        );
       }
 
       res.status(200).json({ canceled: true, cancelAtPeriodEnd: true });

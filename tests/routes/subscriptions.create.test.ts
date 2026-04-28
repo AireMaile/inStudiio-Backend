@@ -150,6 +150,7 @@ describe('POST /subscriptions', () => {
       expect.objectContaining({
         mode: 'subscription',
         line_items: [{ price: expect.stringContaining('price_test_'), quantity: 1 }],
+        metadata: { user_id: user.id, studio_id: studio.id },
         subscription_data: { metadata: { user_id: user.id, studio_id: studio.id } },
         success_url: expect.stringContaining('/subscribe/success'),
         cancel_url: expect.stringContaining('/subscribe/cancel'),
