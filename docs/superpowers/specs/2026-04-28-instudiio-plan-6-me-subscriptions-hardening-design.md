@@ -42,14 +42,23 @@ and locks the response shape so we don't churn it during frontend dev.
    existence-leak unification (404 for both "missing" and "owned by another user")
 4. Send `Cache-Control: no-store` on both endpoints
 5. Validate query params with zod (consistent with the rest of the codebase)
-6. Test coverage: list filtering, single-sub lookup, polling-contract
+6. **Stripe-status normalization helper** — `mapStripeStatus()` collapses
+   the broader Stripe status set (`trialing`, `unpaid`, `incomplete_expired`,
+   `paused`, …) onto our 4-value DB enum. Applied at every webhook
+   handler write site. Throws on unknown statuses so future Stripe
+   additions surface as alertable webhook 500s rather than silent CHECK
+   violations.
+7. Test coverage: list filtering, single-sub lookup, polling-contract
    integration test that replays a captured `checkout.session.completed`
-   webhook end-to-end
+   webhook end-to-end, status-normalization coverage
 
 ### Explicitly out of scope
 
-- Pagination — `unique (user_id, studio_id)` constraint caps row count
-  per user well below any pagination threshold
+- Pagination — realistic user subscribes to at most a handful of studios;
+  row count never reaches a pagination threshold. (The
+  `unique (user_id, studio_id)` constraint prevents duplicates, not
+  count growth — the cap comes from product reality.) Revisit if the
+  product evolves toward bundle / multi-studio purchasing
 - `updated_at` column on `subscriptions` — would require migrating the
   table and touching all 5 webhook handlers; FE has no demonstrated need
   (status transitions are observable via existing fields)
@@ -120,6 +129,51 @@ existence of subscriptions across user boundaries.
 **Headers:** `Cache-Control: no-store`
 **Auth:** requires bearer JWT.
 
+### 400-vs-404 asymmetry on malformed UUIDs
+
+Path-malformed UUIDs (`/me/subscriptions/garbage`) → 404
+`subscription_not_found`. Query-malformed UUIDs (`?studio_id=garbage`)
+→ 400 `invalid_query`. The asymmetry is deliberate: the path endpoint
+applies the existence-leak pattern (no distinction between "doesn't
+exist" and "not yours"), while the query endpoint reports a client
+error because no resource is being addressed.
+
+### Stripe-status normalization (prerequisite for B1)
+
+Stripe's subscription status enum is broader than our DB CHECK
+constraint (`active | past_due | canceled | incomplete`). Real Stripe
+emits `trialing`, `unpaid`, `incomplete_expired`, `paused`, and may add
+more. Writing `status: sub.status` raw into our table causes a CHECK
+violation (PG 23514) → handler 500 → ledger rollback → Stripe retries
+→ same crash forever.
+
+A new helper at `src/lib/stripeStatus.ts`:
+
+```ts
+const MAP: Record<string, 'active'|'past_due'|'canceled'|'incomplete'> = {
+  active: 'active',
+  trialing: 'active',           // user has access during trial
+  past_due: 'past_due',
+  unpaid: 'past_due',           // retries exhausted; FE shows "update payment"
+  paused: 'past_due',           // similar UX semantics
+  canceled: 'canceled',
+  incomplete: 'incomplete',
+  incomplete_expired: 'canceled', // 23h auto-cancel; sub is dead
+};
+
+export function mapStripeStatus(s: string): 'active'|'past_due'|'canceled'|'incomplete' {
+  const out = MAP[s];
+  if (!out) throw new Error(`unknown Stripe subscription status: ${s}`);
+  return out;
+}
+```
+
+Applied at all 5 webhook handler sites that currently write
+`status: sub.status`. The throw-on-unknown is intentional: future
+Stripe additions surface as alertable handler errors (which roll back
+the ledger and let Stripe retry while we update the map), not silent
+data corruption.
+
 ### Why `incomplete` is in the status enum
 
 `incomplete` is a real Stripe status. It surfaces when the initial
@@ -152,6 +206,7 @@ type SubscriptionWithStudio = {
     slug: string;
     description: string | null;
     price_monthly: number;
+    created_at: string;                // ISO timestamp
   };
 };
 ```
@@ -166,9 +221,10 @@ type SubscriptionWithStudio = {
 | `studio_id` | Promoted into the embedded `studio.id` |
 | `created_at` | No FE screen needs "subscribed since" yet; cheap to add later |
 
-**Studio fields** mirror the `STUDIO_FIELDS` constant already used by
-`GET /me/studios` and `GET /studios/:slug`, keeping a single source of
-truth for what "studio summary" means.
+**Studio fields** reuse the `STUDIO_FIELDS` constant verbatim, already
+used by `GET /me/studios` and `GET /studios/:slug`. Single source of
+truth — adding a field there propagates to every endpoint that embeds a
+studio summary.
 
 ---
 
@@ -181,16 +237,19 @@ Both endpoints use one round-trip via PostgREST's embedded select:
 ```ts
 const SUB_FIELDS =
   'id, status, current_period_start, current_period_end, cancel_at_period_end, ' +
-  'studio:studios(id, name, slug, description, price_monthly)';
+  `studio:studios(${STUDIO_FIELDS})`;   // reuse existing constant
 
 // LIST
+if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
 let q = supabase
   .from('subscriptions')
   .select(SUB_FIELDS)
   .eq('user_id', req.user.id);
 if (parsed.status)    q = q.eq('status', parsed.status);
 if (parsed.studio_id) q = q.eq('studio_id', parsed.studio_id);
-const { data, error } = await q.order('current_period_end', { ascending: false });
+const { data, error } = await q
+  .order('current_period_end', { ascending: false })
+  .order('id', { ascending: true });   // stable tiebreaker
 ```
 
 PostgREST JSON-builds the embedded `studio` object per row using the
@@ -201,8 +260,13 @@ foreign-key relationship between `subscriptions.studio_id` and
 
 ```ts
 const ListQuery = z.object({
-  status: z.enum(['active','past_due','canceled','incomplete']).optional(),
-  studio_id: z.string().uuid().optional(),
+  // Empty strings (?status=) collapse to undefined so they're treated as
+  // "filter not specified" instead of failing zod's enum check. Same
+  // applies to studio_id.
+  status: z.preprocess(v => v === '' ? undefined : v,
+    z.enum(['active','past_due','canceled','incomplete']).optional()),
+  studio_id: z.preprocess(v => v === '' ? undefined : v,
+    z.string().uuid().optional()),
 });
 ```
 
@@ -211,11 +275,12 @@ Failure → `throw new ApiError(400, 'invalid_query', issue.message)`.
 ### Single-subscription detail
 
 Reuse the UUID regex pattern already used in `DELETE /subscriptions/:id`
-(`src/routes/subscriptions.ts:104`) — no new helpers; consistent
+(`src/routes/subscriptions.ts:110`) — no new helpers; consistent
 existence-leak unification.
 
 ```ts
-const id = req.params.id;
+if (!req.user) throw new ApiError(401, 'unauthorized', 'authentication required');
+const id = String(req.params.id ?? '');
 if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
   throw new ApiError(404, 'subscription_not_found', 'Subscription not found.');
 }
@@ -247,18 +312,31 @@ and the PK covers the detail query).
 
 ## 6. Testing
 
+### Test prefix convention
+
+All new tests use slug prefix `plan6-me-` and event/Stripe id prefix
+`p6me_` to isolate from existing fixtures (`plan4-sub-wh-`, `evt_p4wh_`,
+`plan4-sub-cancel-`, `plan5-janitor-`). The polling-contract test uses
+`plan6-poll-` slugs and `evt_p6poll_` event ids. Verified by greps that
+no existing test uses these prefixes.
+
 ### `tests/routes/me.subscriptions.test.ts` (extend existing)
 
 Existing tests (auth + basic list) keep passing. Add:
 
-- Returns embedded `studio` object with the expected fields
+- Returns embedded `studio` object with the expected fields (including `created_at`)
+- **Wire-shape lock**: `typeof body.subscriptions[0].studio === 'object'`
+  AND `Array.isArray(body.subscriptions[0].studio) === false` — protects
+  against supabase-js inference quirks on FK-side embedded selects
 - `?status=canceled` returns canceled rows only; other statuses excluded
 - `?status=active&studio_id=<uuid>` composes filters correctly
 - `?studio_id=<uuid>` filters to that studio
+- `?status=` (empty string) treated as "not specified" (not 400)
 - `?status=invalid` → `400 invalid_query`
 - `?studio_id=not-a-uuid` → `400 invalid_query`
 - Response includes `Cache-Control: no-store` header
 - Other users' subscriptions not visible (regression guard)
+- Stable sort: two subs with same `current_period_end` return in `id ASC` order
 
 ### `tests/routes/me.subscription.detail.test.ts` (new)
 
@@ -283,6 +361,25 @@ rewritten webhook handlers:
 
 This locks the contract end-to-end and protects against regressions in
 either the read endpoint or the webhook handler.
+
+### `tests/lib/stripeStatus.test.ts` (new — pure unit, no DB)
+
+- `mapStripeStatus('active') === 'active'`
+- `mapStripeStatus('trialing') === 'active'`
+- `mapStripeStatus('past_due') === 'past_due'`
+- `mapStripeStatus('unpaid') === 'past_due'`
+- `mapStripeStatus('paused') === 'past_due'`
+- `mapStripeStatus('canceled') === 'canceled'`
+- `mapStripeStatus('incomplete') === 'incomplete'`
+- `mapStripeStatus('incomplete_expired') === 'canceled'`
+- `mapStripeStatus('unknown_future_status')` throws
+
+### Webhook integration test for `incomplete_expired`
+
+In `tests/routes/stripe.webhook.test.ts`, add: replay a captured
+`customer.subscription.updated` event with the status field overridden
+to `incomplete_expired`. Assert the row is written with `status='canceled'`,
+no CHECK violation, no 500.
 
 ### No mock changes required
 
@@ -314,9 +411,14 @@ shape. Existing test data helpers (`insertTestStudio`,
   often to ask. Suggested defaults to capture in Plan 7: poll every 2s,
   give up at 30s with a "still processing — refresh in a moment" fallback.
 
-- If a future screen needs `created_at` ("subscribed since 2026-04-28"),
-  add it to the response shape — it's an additive change to the wire
-  contract, no version bump needed.
+- If a future screen needs subscription `created_at` ("subscribed since
+  2026-04-28"), add it to the response shape — it's an additive change
+  to the wire contract, no version bump needed.
+
+- **ETag / `If-Modified-Since`:** `no-store` keeps the contract simple
+  at MVP scale. Revisit once polling QPS × user count makes
+  always-hit-origin costly — likely Plan 9 production-hardening
+  territory, not earlier.
 
 ---
 
@@ -341,6 +443,16 @@ These remain in `docs/FOLLOWUPS.md` and are NOT part of Plan 6:
 - [ ] Both endpoints set `Cache-Control: no-store`
 - [ ] Query param validation via zod; invalid → `400 invalid_query`
 - [ ] Existing `me.subscriptions.test.ts` extended; new `me.subscription.detail.test.ts` added; polling-contract integration test added
+- [ ] **Stripe-status normalization** — `mapStripeStatus()` helper in
+  `src/lib/stripeStatus.ts`; applied at all 5 webhook handler write
+  sites; throws on unknown Stripe statuses; covered by a test that
+  asserts `incomplete_expired → canceled` and unknown → throw
+- [ ] **Postman collection** `inStudiio Backend (local)` (uid
+  `40498804-5cb76a50-8193-472d-bc33-e19a3e8c157c`) updated:
+  - New request `GET /me/subscriptions/:id`
+  - Existing `GET /me/subscriptions` shows `?status=` and `?studio_id=`
+    example query params
+  - Example responses reflect the embedded `studio` shape
 - [ ] `pnpm typecheck` clean
 - [ ] `pnpm vitest run` green on the merge commit (full suite, against local Supabase)
 - [ ] PR opened against `main`, CI green, merged
