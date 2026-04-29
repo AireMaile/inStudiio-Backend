@@ -12,6 +12,11 @@ const Schema = z
     MUX_TOKEN_SECRET: z.string().min(1),
     MUX_WEBHOOK_SECRET: z.string().min(1),
     APP_ORIGIN: z.string().url().optional(),
+    // Comma-separated list of allowed CORS origins for cross-origin frontend
+    // dev (e.g. "http://localhost:5173,http://localhost:3001"). Empty/unset
+    // defaults to "*" in non-production environments. In production, must be
+    // an explicit list.
+    CORS_ORIGINS: z.string().optional(),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),

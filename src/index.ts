@@ -1,4 +1,5 @@
 import express, { type Express } from 'express';
+import cors from 'cors';
 import { pinoHttp } from 'pino-http';
 import { env } from './env.js';
 import { logger } from './logger.js';
@@ -25,6 +26,20 @@ export function createApp(deps: AppDeps = {}): Express {
   const stripe = deps.stripe ?? defaultStripe;
   const app = express();
   app.use(pinoHttp({ logger }));
+
+  // CORS for cross-origin frontend dev. In dev, default to allow-all so a
+  // newly-pulled checkout works without env config. In production, require
+  // an explicit allow-list via CORS_ORIGINS.
+  const allowed = env.CORS_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+  if (env.NODE_ENV === 'production' && allowed.length === 0) {
+    throw new Error('CORS_ORIGINS is required when NODE_ENV=production');
+  }
+  app.use(
+    cors({
+      origin: allowed.length > 0 ? allowed : true,
+      credentials: true,
+    }),
+  );
 
   // IMPORTANT: the Mux webhook route must receive the RAW body (Buffer) so that
   // HMAC signature verification works. Mount it with express.raw() BEFORE the
