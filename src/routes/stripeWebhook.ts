@@ -4,6 +4,7 @@ import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
 import type { StripeDeps } from '../types/stripeDeps.js';
+import { mapStripeStatus } from '../lib/stripeStatus.js';
 
 export interface StripeWebhookDeps {
   stripe: Pick<StripeDeps, 'webhooks' | 'subscriptions'>;
@@ -138,7 +139,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
                 studio_id: studioId,
                 stripe_subscription_id: subId,
                 stripe_customer_id: custId,
-                status: sub.status,
+                status: mapStripeStatus(sub.status),
                 current_period_start: new Date(start * 1000).toISOString(),
                 current_period_end: new Date(end * 1000).toISOString(),
                 cancel_at_period_end: !!sub.cancel_at_period_end,
@@ -221,7 +222,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           }
           const { start, end } = readSubPeriod(sub);
           const update = {
-            status: sub.status,
+            status: mapStripeStatus(sub.status),
             cancel_at_period_end: !!sub.cancel_at_period_end,
             ...(start !== null ? { current_period_start: new Date(start * 1000).toISOString() } : {}),
             ...(end !== null ? { current_period_end: new Date(end * 1000).toISOString() } : {}),

@@ -4,6 +4,8 @@
 
 **Goal:** Widen `GET /me/subscriptions` (all statuses, embedded studio, query filters), add `GET /me/subscriptions/:id`, add `mapStripeStatus()` Stripe-status normalization to prevent DB CHECK violations, and lock the response contract with tests.
 
+**Codex continuation status (2026-04-29):** Tasks 1-9 and 11 code requirements are implemented locally. `pnpm typecheck` and `pnpm vitest run` are green. Task 10 (Postman collection update) is still external-blocked in this session because no Postman MCP/tool is available.
+
 **Architecture:** `mapStripeStatus()` lives in `src/lib/stripeStatus.ts` and is imported wherever the webhook handlers write a raw Stripe status to the DB. The `GET /me/subscriptions` route in `src/routes/me.ts` is rewritten to embed studio via a PostgREST FK join, accept `?status=`/`?studio_id=` query params validated by zod, and set `Cache-Control: no-store`. A new `GET /me/subscriptions/:id` detail endpoint is added in the same router file. Tests live in `tests/lib/stripeStatus.test.ts` (pure unit), `tests/routes/me.subscriptions.test.ts` (extended + polling-contract), `tests/routes/me.subscription.detail.test.ts` (new), and `tests/routes/stripe.webhook.test.ts` (new `incomplete_expired` case).
 
 **Tech Stack:** Node 20, Express 5, TypeScript 6, pnpm 9, Vitest 4, Supertest, Supabase JS v2, zod
