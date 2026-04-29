@@ -329,4 +329,43 @@ describe('POST /webhooks/stripe — event handling', () => {
     expect(data?.status).toBe('canceled');
     expect(data?.cancel_at_period_end).toBe(false);
   });
+
+  it('customer.subscription.updated with incomplete_expired maps to canceled', async () => {
+    const user = await createTestUser('plan4-sub-wh-u');
+    users.push(user);
+    const studio = await insertTestStudio({
+      ownerUserId: user.id,
+      slug: `${SLUG_PREFIX}inc-exp-${Date.now()}`,
+    });
+    const subId = `sub_test_p4wh_${Date.now()}`;
+    await supabase.from('subscriptions').insert({
+      user_id: user.id,
+      studio_id: studio.id,
+      stripe_subscription_id: subId,
+      stripe_customer_id: `cus_test_p4wh_${Date.now()}`,
+      status: 'incomplete',
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
+      cancel_at_period_end: false,
+    });
+
+    const stripe = makeStripeMock();
+    const event = customerSubscriptionUpdated({
+      subId,
+      status: 'incomplete',
+      cancelAtPeriodEnd: false,
+    });
+    (event.data.object as { status: string }).status = 'incomplete_expired';
+
+    const app = createApp({ stripe });
+    const res = await postEvent(app, event);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('subscriptions')
+      .select('status')
+      .eq('stripe_subscription_id', subId)
+      .single();
+    expect(data?.status).toBe('canceled');
+  });
 });
