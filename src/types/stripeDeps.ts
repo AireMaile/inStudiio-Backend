@@ -1,4 +1,4 @@
-import type Stripe from 'stripe';
+import { type Stripe } from 'stripe';
 
 /**
  * Narrow dependency surface for the Stripe SDK methods this app actually
