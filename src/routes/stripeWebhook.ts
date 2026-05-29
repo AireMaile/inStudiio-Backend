@@ -1,5 +1,4 @@
 import { Router, type RequestHandler } from 'express';
-import type Stripe from 'stripe';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
@@ -10,23 +9,15 @@ export interface StripeWebhookDeps {
   stripe: Pick<StripeDeps, 'webhooks' | 'subscriptions'>;
 }
 
-// Read-policy (Plan 5 §billing-contract):
-//   checkout.session.completed → user_id/studio_id from Session metadata first,
-//     fall back to retrieved Subscription metadata (defensive: empty Session
-//     metadata observed in capture when only subscription_data.metadata was set
-//     pre-Plan-5; dual write fixes this going forward).
-//   invoice.* → subscription id at parent.subscription_details.subscription
-//     (Stripe API 2026-03-25.dahlia moved it off the top-level field).
-//   customer.subscription.* → period at items.data[0].current_period_* (same
-//     migration; top-level current_period_* is null on this API version).
+// Stripe's package.json `exports` map resolves to different .d.ts files
+// across environments (ESM vs CJS conditional types). The CJS branch
+// doesn't re-export the Stripe.X.Y namespace types, so referencing them
+// breaks the build on Vercel. Use `any` for webhook payload params; the
+// structural reads below (typeof m.user_id === 'string', etc.) provide
+// runtime safety. When Stripe ships consistent types, restore the
+// Stripe.Checkout.Session / Subscription / Invoice / Event annotations.
 
-// Helpers below take the SDK-typed object so payload-shape drift breaks
-// here at compile time rather than at runtime — except where the SDK types
-// haven't caught up to API 2026-03-25.dahlia's nested fields, in which
-// case we cast `as any` at the dereference site only (contained blast
-// radius). When the SDK types update, drop the casts.
-
-function readSessionMetadata(s: Stripe.Checkout.Session): { userId: string | null; studioId: string | null } {
+function readSessionMetadata(s: any): { userId: string | null; studioId: string | null } {
   const m = s.metadata ?? {};
   return {
     userId: typeof m.user_id === 'string' ? m.user_id : null,
@@ -34,7 +25,7 @@ function readSessionMetadata(s: Stripe.Checkout.Session): { userId: string | nul
   };
 }
 
-function readSubscriptionMetadata(sub: Stripe.Subscription): { userId: string | null; studioId: string | null } {
+function readSubscriptionMetadata(sub: any): { userId: string | null; studioId: string | null } {
   const m = sub.metadata ?? {};
   return {
     userId: typeof m.user_id === 'string' ? m.user_id : null,
@@ -42,20 +33,15 @@ function readSubscriptionMetadata(sub: Stripe.Subscription): { userId: string | 
   };
 }
 
-function readSubPeriod(sub: Stripe.Subscription): { start: number | null; end: number | null } {
-  // SDK still types current_period_* at top-level for backward compat;
-  // API 2026-03-25.dahlia put them at items.data[0]. Cast contained here.
-  const item = (sub as any).items?.data?.[0];
+function readSubPeriod(sub: any): { start: number | null; end: number | null } {
+  const item = sub.items?.data?.[0];
   const start = typeof item?.current_period_start === 'number' ? item.current_period_start : null;
   const end = typeof item?.current_period_end === 'number' ? item.current_period_end : null;
   return { start, end };
 }
 
-function readInvoiceSubId(inv: Stripe.Invoice): string | null {
-  // SDK types Invoice.subscription as string|null|Subscription, but on this
-  // API version that field is always null and the id moved to
-  // parent.subscription_details.subscription. Cast contained here.
-  const v = (inv as any).parent?.subscription_details?.subscription;
+function readInvoiceSubId(inv: any): string | null {
+  const v = inv.parent?.subscription_details?.subscription;
   return typeof v === 'string' ? v : null;
 }
 
@@ -71,7 +57,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
     }
 
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body ?? ''));
-    let event: Stripe.Event;
+    let event: any;
     try {
       event = deps.stripe.webhooks.constructEvent(rawBody, sig, env.STRIPE_WEBHOOK_SECRET);
     } catch (err) {
@@ -104,7 +90,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
     try {
       switch (event.type) {
         case 'checkout.session.completed': {
-          const session = event.data.object as Stripe.Checkout.Session;
+          const session = event.data.object;
           const subId = typeof session.subscription === 'string' ? session.subscription : null;
           const custId = typeof session.customer === 'string' ? session.customer : null;
           if (!subId || !custId) {
@@ -151,7 +137,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           return;
         }
         case 'invoice.payment_succeeded': {
-          const inv = event.data.object as Stripe.Invoice;
+          const inv = event.data.object;
           if (inv.billing_reason !== 'subscription_cycle') {
             logger.info(
               { eventId: event.id, billingReason: inv.billing_reason },
@@ -189,7 +175,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           return;
         }
         case 'invoice.payment_failed': {
-          const inv = event.data.object as Stripe.Invoice;
+          const inv = event.data.object;
           const subId = readInvoiceSubId(inv);
           if (!subId) {
             logger.warn({ eventId: event.id }, 'invoice.payment_failed missing subscription id; noop');
@@ -214,7 +200,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           return;
         }
         case 'customer.subscription.updated': {
-          const sub = event.data.object as Stripe.Subscription;
+          const sub = event.data.object;
           const subId = typeof sub.id === 'string' ? sub.id : null;
           if (!subId) {
             res.status(200).json({ noop: true });
@@ -245,7 +231,7 @@ export function createStripeWebhookRouter(deps: StripeWebhookDeps): Router {
           return;
         }
         case 'customer.subscription.deleted': {
-          const sub = event.data.object as Stripe.Subscription;
+          const sub = event.data.object;
           const subId = typeof sub.id === 'string' ? sub.id : null;
           if (!subId) {
             res.status(200).json({ noop: true });
