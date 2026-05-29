@@ -1,4 +1,4 @@
-import Mux from '@mux/mux-node';
+import { Mux } from '@mux/mux-node';
 import { env } from './env.js';
 
 export function createMuxClient(): Mux {
