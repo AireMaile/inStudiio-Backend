@@ -67,9 +67,11 @@ export function createApp(deps: AppDeps = {}): Express {
   return app;
 }
 
+const defaultApp = createApp();
+export default defaultApp;
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const app = createApp();
-  app.listen(env.PORT, () => {
+  defaultApp.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, 'server listening');
   });
 }
