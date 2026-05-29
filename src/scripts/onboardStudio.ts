@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type Stripe } from 'stripe';
+import type Stripe from 'stripe';
 import type { DB } from '../supabase.js';
 
 export interface OnboardDeps {

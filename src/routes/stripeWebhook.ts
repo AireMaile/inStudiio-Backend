@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express';
-import { type Stripe } from 'stripe';
+import Stripe from 'stripe';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
