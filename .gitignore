@@ -2,8 +2,11 @@ node_modules/
 dist/
 .env
 .env.local
+.env.production
+.env.*.local
 *.log
 .DS_Store
 supabase/.temp/
 coverage/
 .idea/
+.vercel

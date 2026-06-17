@@ -1,0 +1,312 @@
+{
+  "info": {
+    "name": "inStudiio Backend",
+    "_postman_id": "b3e1f6c2-9a4d-4e2b-bf21-instudiiobackend",
+    "description": "inStudiio backend API (PRODUCTION), ordered by the user journey. baseUrl defaults to the live Vercel deploy. Set the `jwt` collection variable, then click through:\n\n0. Get a JWT — this is Supabase, NOT this API. Sign in against the prod Supabase project (https://iijhljehoqceownoeauu.supabase.co) with the public anon key and paste the resulting access_token into the `jwt` variable. Raw HTTP: POST {supabaseUrl}/auth/v1/token?grant_type=password with header `apikey: <anon key>` and body {email,password}; use the access_token from the response. (The prod project requires email confirmation before sign-in works. The local `pnpm tsx scripts/mint-test-subscriber.ts` is LOCAL-ONLY testing — it refuses to run against prod — not how the app authenticates.)\n1. Health\n2. Browse studios (public)\n3. Subscribe: POST /subscriptions → open checkoutUrl (test-mode cs_test_…) → pay 4242 4242 4242 4242 → poll GET /me/subscriptions → DELETE /subscriptions/:id\n4. Owner upload: POST /studios/:slug/videos → PUT file to Mux uploadUrl\n5. Watch: GET /studios/:slug/videos, GET /videos/:id → play https://stream.mux.com/{mux_playback_id}.m3u8\n\nError shape everywhere: { error: { code, message } }.\n\n⛔ The /webhooks/* requests are documented for reference only — they are called by Stripe/Mux server-to-server and will reject client calls (no valid signature). DO NOT call them from a client.\n\nProduction caveats: the prod Stripe test-mode webhook is not registered yet, so on the deployed URL the subscribe loop won't write the subscriptions row — demo the full loop locally with `stripe listen`. CORS_ORIGINS/APP_ORIGIN are currently placeholder example.com, so a web browser frontend won't pass CORS until set (the native iOS app and curl/Postman are unaffected).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{jwt}}", "type": "string" }]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://in-studiio-backend.vercel.app",
+      "type": "string"
+    },
+    {
+      "key": "jwt",
+      "value": "",
+      "type": "string",
+      "description": "Supabase access token (JWT) from the prod project iijhljehoqceownoeauu. Get it by signing in: POST https://iijhljehoqceownoeauu.supabase.co/auth/v1/token?grant_type=password with header apikey:<anon key> and body {email,password}; copy access_token. In a frontend: session.access_token from supabase-js. Expires in 1h."
+    },
+    {
+      "key": "studioId",
+      "value": "c4b33530-473b-40f4-9efd-eb9297a60b47",
+      "type": "string",
+      "description": "A studio UUID (used by POST /subscriptions). Default is the real prod 'Test Studio'."
+    },
+    {
+      "key": "studioSlug",
+      "value": "test",
+      "type": "string",
+      "description": "A studio slug (used by the video endpoints)."
+    },
+    {
+      "key": "subscriptionId",
+      "value": "",
+      "type": "string",
+      "description": "A subscription UUID (the `id` from GET /me/subscriptions). Used by DELETE /subscriptions/:id and GET /me/subscriptions/:id."
+    },
+    {
+      "key": "videoId",
+      "value": "",
+      "type": "string",
+      "description": "A video UUID. Used by GET/PATCH/DELETE /videos/:id."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Public liveness check. → 200 { status: 'ok', uptime: <seconds> }"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Studios (public)",
+      "item": [
+        {
+          "name": "GET /studios",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["studios"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "1–100, default 20" },
+                { "key": "offset", "value": "0", "description": "≥0, default 0" }
+              ]
+            },
+            "description": "Public list of studios. → 200 { studios: [...], pagination: { limit, offset, total } }. Keep each studio's `id` (to subscribe) and `slug` (to list its videos). There is NO GET /studios/:slug."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Subscribe (web flow)",
+      "item": [
+        {
+          "name": "POST /subscriptions",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"studioId\": \"{{studioId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/subscriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["subscriptions"]
+            },
+            "description": "Auth required. Creates a Stripe Checkout Session. → 200 { checkoutUrl }. Redirect the browser to checkoutUrl; user pays with test card 4242 4242 4242 4242. Errors: 400 invalid_body, 404 studio_not_found, 409 already_subscribed, 502 stripe_error."
+          }
+        },
+        {
+          "name": "GET /me/subscriptions (poll)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me/subscriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "subscriptions"],
+              "query": [
+                { "key": "status", "value": "active", "description": "active|past_due|canceled|incomplete", "disabled": true },
+                { "key": "studio_id", "value": "{{studioId}}", "description": "filter by studio uuid", "disabled": true }
+              ]
+            },
+            "description": "Auth required. The caller's subscriptions. → 200 { subscriptions: [ { id, status, current_period_start, current_period_end, cancel_at_period_end, studio: {...} } ] }. Poll after checkout until a row with status='active' appears. Only status='active' grants video access."
+          }
+        },
+        {
+          "name": "GET /me/subscriptions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me/subscriptions/{{subscriptionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "subscriptions", "{{subscriptionId}}"]
+            },
+            "description": "Auth required. One subscription by id. → 200 { subscription: {...} } or 404 subscription_not_found if it isn't yours."
+          }
+        },
+        {
+          "name": "DELETE /subscriptions/:id (cancel)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/subscriptions/{{subscriptionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["subscriptions", "{{subscriptionId}}"]
+            },
+            "description": "Auth required. Cancels at period end (NOT instant). → 200 { canceled: true, cancelAtPeriodEnd: true }. User keeps access until current_period_end. Use the SUBSCRIPTION id (from GET /me/subscriptions), not the studio id. Errors: 404 subscription_not_found, 409 not_cancelable."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Owner: upload video",
+      "item": [
+        {
+          "name": "POST /studios/:slug/videos",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Episode 1\",\n  \"description\": \"Warm-up flow\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioSlug}}/videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["studios", "{{studioSlug}}", "videos"]
+            },
+            "description": "Auth required AND caller must own the studio. Creates a video row (status 'waiting') and a Mux direct-upload URL. → 201 { video, uploadUrl, uploadId }. Next: PUT the file bytes to uploadUrl (straight to Mux). Errors: 400 bad_request, 403 forbidden, 404 not_found, 502 upstream_unavailable."
+          }
+        },
+        {
+          "name": "PUT <uploadUrl> (file → Mux) [reference only]",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "video/mp4" }],
+            "body": { "mode": "file", "file": { "src": "" } },
+            "url": {
+              "raw": "PASTE_THE_uploadUrl_FROM_THE_PREVIOUS_RESPONSE",
+              "host": ["PASTE_THE_uploadUrl_FROM_THE_PREVIOUS_RESPONSE"]
+            },
+            "description": "Reference only — this is the Mux direct-upload URL returned by POST /studios/:slug/videos, NOT an inStudiio endpoint. PUT the raw file bytes here. Pick a file in the Body ▸ file tab, paste the uploadUrl, and send. A 200/204 means Mux accepted it; the Mux webhook then flips the video to 'ready'."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Watch",
+      "item": [
+        {
+          "name": "GET /studios/:slug/videos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioSlug}}/videos?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["studios", "{{studioSlug}}", "videos"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "1–100, default 20" },
+                { "key": "cursor", "value": "", "description": "a created_at ISO string for keyset paging", "disabled": true }
+              ]
+            },
+            "description": "Auth required — caller must OWN the studio or have an ACTIVE subscription to it. → 200 { videos: [...], nextCursor }. Subscribers see only status='ready' videos; owners see all. Paging: if videos.length === limit, pass nextCursor back as ?cursor=. 403 forbidden if not subscribed."
+          }
+        },
+        {
+          "name": "GET /videos/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            },
+            "description": "Auth required — owner or active subscriber. → 200 { video: {...} }. Build playback URL: https://stream.mux.com/{mux_playback_id}.m3u8. NOTE: if not entitled (or not yet 'ready'), returns 404 not_found (NOT 403) — it won't confirm the video exists."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Owner housekeeping",
+      "item": [
+        {
+          "name": "GET /me/studios",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me/studios",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "studios"]
+            },
+            "description": "Auth required. Studios OWNED by the caller. → 200 { studios: [...] }."
+          }
+        },
+        {
+          "name": "PATCH /videos/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Episode 1 (updated)\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            },
+            "description": "Auth required, owner only. Edit title and/or description (at least one). → 200 { video: {...} }."
+          }
+        },
+        {
+          "name": "DELETE /videos/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/videos/{{videoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["videos", "{{videoId}}"]
+            },
+            "description": "Auth required, owner only. Deletes the video (and its Mux asset). → 204 No Content."
+          }
+        }
+      ]
+    },
+    {
+      "name": "⛔ Server-only (DO NOT CALL from a client)",
+      "item": [
+        {
+          "name": "POST /webhooks/stripe [server-only]",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/stripe",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "stripe"]
+            },
+            "description": "⛔ DO NOT CALL. Stripe calls this server-to-server with a signed raw body; it writes the subscriptions row after checkout. A client call has no valid Stripe-Signature and is rejected with 400 invalid_signature. Listed only so you know it exists."
+          }
+        },
+        {
+          "name": "POST /webhooks/mux [server-only]",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/mux",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "mux"]
+            },
+            "description": "⛔ DO NOT CALL. Mux calls this server-to-server with a signed raw body; it flips videos to 'ready' and stores mux_playback_id. A client call has no valid Mux signature and is rejected with 400 invalid_signature. Listed only so you know it exists."
+          }
+        }
+      ]
+    }
+  ]
+}
