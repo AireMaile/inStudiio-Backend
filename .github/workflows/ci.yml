@@ -5,13 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # labeled/unlabeled re-trigger the run so the skip-integration label
+    # takes effect without needing a new push.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
-  # Plan 5 P0.2: this is the merge gate. typecheck must pass for any PR
-  # to merge into main. Configure branch protection on `main` to require
-  # this job before merging.
-  typecheck:
-    name: Typecheck
+  # Merge gate 1: fast, no Docker. Typecheck + unit tests (~1 min).
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +31,59 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: pnpm typecheck
+      - name: Typecheck
         run: pnpm typecheck
 
-  # Tests are deferred to local + manual verification for now because they
-  # require a running Supabase instance and Stripe testmode credentials.
-  # When integration secrets land in repo settings, add a `test` job here
-  # ordered AFTER `typecheck` and require both for branch protection.
+      - name: Unit tests
+        run: pnpm test:unit
+
+  # Merge gate 2: integration tests against a real local Supabase stack.
+  # No repo secrets: the CLI's dev keys are exported at runtime; Stripe and
+  # Mux are mocked in tests (placeholders injected by tests/setup.ts).
   #
-  # See ClaudeBrain/Plans/2026-04-26-instudiio-plan-5-mvp-hardening-impl.md
-  # Task 5 for the rationale and the upgrade path.
+  # Escape hatch: apply the `skip-integration` label to a PR to skip this
+  # job. Branch protection treats a skipped required check as satisfied.
+  # Pushes to main always run it.
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'skip-integration')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.90.0
+
+      - name: Start local Supabase (applies migrations)
+        run: supabase start
+
+      - name: Export Supabase env for tests
+        run: |
+          eval "$(supabase status -o env)"
+          if [ -z "$API_URL" ] || [ -z "$SERVICE_ROLE_KEY" ]; then
+            echo "supabase status did not yield API_URL / SERVICE_ROLE_KEY" >&2
+            supabase status -o env >&2
+            exit 1
+          fi
+          {
+            echo "SUPABASE_URL=$API_URL"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Integration tests
+        run: pnpm test:integration
