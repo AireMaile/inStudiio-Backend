@@ -179,7 +179,7 @@ Verify it's healthy:
 
 ```bash
 curl http://localhost:3000/health
-# → {"ok":true}
+# → {"status":"ok","uptime":0.42}
 ```
 
 ---
@@ -226,8 +226,8 @@ With Supabase up, the API running, and a JWT:
 ```bash
 JWT="ey..."
 
-# Get current user
-curl http://localhost:3000/me -H "Authorization: Bearer $JWT"
+# List the current user's subscriptions (there is no GET /me)
+curl http://localhost:3000/me/subscriptions -H "Authorization: Bearer $JWT"
 
 # List public studios
 curl http://localhost:3000/studios
@@ -276,13 +276,12 @@ All routes return JSON. Errors follow `{ error: { code, message } }`.
 
 - `GET /health` — liveness
 - `GET /studios` — list public studios
-- `GET /studios/:slug` — single studio by slug
 
 ### Authenticated (`Authorization: Bearer <jwt>`)
 
-- `GET /me` — current user profile
 - `GET /me/studios` — studios owned by current user
 - `GET /me/subscriptions` — current user's subscriptions
+- `GET /me/subscriptions/:id` — a single subscription by id
 - `POST /subscriptions` `{ studioId }` → `{ checkoutUrl }`
 - `DELETE /subscriptions/:id` → `{ canceled, cancelAtPeriodEnd }`
 - `POST /studios/:slug/videos` `{ title, description? }` (owner only) → Mux direct-upload URL
