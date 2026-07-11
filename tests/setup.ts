@@ -15,6 +15,7 @@ if (!process.env.SUPABASE_URL) process.env.SUPABASE_URL = 'http://localhost:5432
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
 process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret-abc123';
 if (!process.env.STRIPE_SECRET_KEY) process.env.STRIPE_SECRET_KEY = 'sk_test_placeholder';
+if (!process.env.STRIPE_WEBHOOK_SECRET) process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_placeholder';
 if (!process.env.MUX_TOKEN_ID) process.env.MUX_TOKEN_ID = 'test-mux-token-id';
 if (!process.env.MUX_TOKEN_SECRET) process.env.MUX_TOKEN_SECRET = 'test-mux-token-secret';
 // Force-override so webhook tests can compute valid signatures against a known value.
