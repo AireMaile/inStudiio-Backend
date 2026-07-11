@@ -4,7 +4,8 @@ import { supabase } from '../supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
 
-const STUDIO_FIELDS = 'id, name, slug, description, price_monthly, created_at' as const;
+const STUDIO_FIELDS =
+  'id, name, slug, description, price_monthly, created_at, image_url, background_image_url, website, instagram_url' as const;
 
 const SUBSCRIPTION_FIELDS =
   'id, status, current_period_start, current_period_end, cancel_at_period_end, ' +

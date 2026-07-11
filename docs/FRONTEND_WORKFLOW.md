@@ -195,7 +195,11 @@ curl "https://in-studiio-backend.vercel.app/studios?limit=20&offset=0"
       "slug": "test",
       "description": null,
       "price_monthly": 9.99,
-      "created_at": "2026-05-29T22:24:33.035239+00:00"
+      "created_at": "2026-05-29T22:24:33.035239+00:00",
+      "image_url": "https://picsum.photos/seed/instudiio-avatar/400/400",
+      "background_image_url": "https://picsum.photos/seed/instudiio-hero/1200/800",
+      "website": "https://instudiio.com",
+      "instagram_url": "https://instagram.com/instudiio"
     }
   ],
   "pagination": { "limit": 20, "offset": 0, "total": 1 }
@@ -317,7 +321,9 @@ locally), a row looks like:
       "studio": {
         "id": "c4b33530-473b-40f4-9efd-eb9297a60b47",
         "name": "Test Studio", "slug": "test", "description": null,
-        "price_monthly": 9.99, "created_at": "2026-05-29T22:24:33.035239+00:00"
+        "price_monthly": 9.99, "created_at": "2026-05-29T22:24:33.035239+00:00",
+        "image_url": null, "background_image_url": null,
+        "website": null, "instagram_url": null
       }
     }
   ]

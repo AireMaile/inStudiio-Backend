@@ -41,7 +41,10 @@ const listStudios: RequestHandler = async (req, res, next) => {
 
     const { data, error, count } = await supabase
       .from('studios')
-      .select('id, name, slug, description, price_monthly, created_at', { count: 'exact' })
+      .select(
+        'id, name, slug, description, price_monthly, created_at, image_url, background_image_url, website, instagram_url',
+        { count: 'exact' },
+      )
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 

@@ -17,6 +17,10 @@ export async function insertTestStudio(opts: {
   slug: string;
   name?: string;
   priceMonthly?: number;
+  imageUrl?: string;
+  backgroundImageUrl?: string;
+  website?: string;
+  instagramUrl?: string;
 }): Promise<TestStudio> {
   const { data, error } = await supabase
     .from('studios')
@@ -28,6 +32,10 @@ export async function insertTestStudio(opts: {
       price_monthly: opts.priceMonthly ?? 9.99,
       stripe_product_id: `prod_test_${opts.slug}`,
       stripe_price_id: `price_test_${opts.slug}`,
+      image_url: opts.imageUrl ?? null,
+      background_image_url: opts.backgroundImageUrl ?? null,
+      website: opts.website ?? null,
+      instagram_url: opts.instagramUrl ?? null,
     })
     .select('id, slug')
     .single();

@@ -15,6 +15,15 @@ describe('GET /studios', () => {
     ownerId = owner.id;
     await insertTestStudio({ ownerUserId: ownerId, slug: `${SLUG_PREFIX}alpha`, name: 'Alpha' });
     await insertTestStudio({ ownerUserId: ownerId, slug: `${SLUG_PREFIX}beta`, name: 'Beta' });
+    await insertTestStudio({
+      ownerUserId: ownerId,
+      slug: `${SLUG_PREFIX}branded`,
+      name: 'Branded',
+      imageUrl: 'https://example.com/avatar.jpg',
+      backgroundImageUrl: 'https://example.com/hero.jpg',
+      website: 'https://example.com',
+      instagramUrl: 'https://instagram.com/example',
+    });
   });
 
   afterAll(async () => {
@@ -36,11 +45,39 @@ describe('GET /studios', () => {
     const seeded = res.body.studios.find((s: any) => s.slug === `${SLUG_PREFIX}alpha`);
     expect(seeded).toBeDefined();
     expect(Object.keys(seeded).sort()).toEqual(
-      ['created_at', 'description', 'id', 'name', 'price_monthly', 'slug'].sort(),
+      [
+        'background_image_url',
+        'created_at',
+        'description',
+        'id',
+        'image_url',
+        'instagram_url',
+        'name',
+        'price_monthly',
+        'slug',
+        'website',
+      ].sort(),
     );
     expect(seeded).not.toHaveProperty('owner_user_id');
     expect(seeded).not.toHaveProperty('stripe_product_id');
     expect(seeded).not.toHaveProperty('stripe_price_id');
+  });
+
+  it('passes branding values through and emits null when unset', async () => {
+    const res = await request(app).get('/studios?limit=100');
+    expect(res.status).toBe(200);
+    const branded = res.body.studios.find((s: any) => s.slug === `${SLUG_PREFIX}branded`);
+    const plain = res.body.studios.find((s: any) => s.slug === `${SLUG_PREFIX}alpha`);
+    expect(branded).toMatchObject({
+      image_url: 'https://example.com/avatar.jpg',
+      background_image_url: 'https://example.com/hero.jpg',
+      website: 'https://example.com',
+      instagram_url: 'https://instagram.com/example',
+    });
+    expect(plain.image_url).toBeNull();
+    expect(plain.background_image_url).toBeNull();
+    expect(plain.website).toBeNull();
+    expect(plain.instagram_url).toBeNull();
   });
 
   it('respects limit and offset query params', async () => {
