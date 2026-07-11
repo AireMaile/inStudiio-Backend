@@ -76,7 +76,18 @@ describe('GET /me/subscriptions', () => {
     expect(typeof sub.studio).toBe('object');
     expect(Array.isArray(sub.studio)).toBe(false);
     expect(Object.keys(sub.studio).sort()).toEqual(
-      ['created_at', 'description', 'id', 'name', 'price_monthly', 'slug'].sort(),
+      [
+        'background_image_url',
+        'created_at',
+        'description',
+        'id',
+        'image_url',
+        'instagram_url',
+        'name',
+        'price_monthly',
+        'slug',
+        'website',
+      ].sort(),
     );
   });
 });

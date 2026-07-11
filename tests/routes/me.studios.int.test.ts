@@ -43,7 +43,18 @@ describe('GET /me/studios', () => {
     expect(slugs).toEqual([`${SLUG_PREFIX}alice-1`, `${SLUG_PREFIX}alice-2`]);
     const first = res.body.studios[0];
     expect(Object.keys(first).sort()).toEqual(
-      ['created_at', 'description', 'id', 'name', 'price_monthly', 'slug'].sort(),
+      [
+        'background_image_url',
+        'created_at',
+        'description',
+        'id',
+        'image_url',
+        'instagram_url',
+        'name',
+        'price_monthly',
+        'slug',
+        'website',
+      ].sort(),
     );
     expect(first).not.toHaveProperty('owner_user_id');
     expect(first).not.toHaveProperty('stripe_product_id');
