@@ -91,8 +91,11 @@ pnpm/node setup (existing pattern) → `pnpm install --frozen-lockfile` →
 5. `pnpm test:integration`
 
 No repo secrets: the Supabase dev keys come from the CLI at runtime;
-Stripe/Mux values are the placeholders `tests/setup.ts` already injects
-(`sk_test_placeholder` etc. — no external API is called).
+Stripe/Mux values are placeholders injected by `tests/setup.ts`
+(`sk_test_placeholder` etc. — no external API is called). During
+implementation this surfaced a gap: `STRIPE_WEBHOOK_SECRET` had no
+placeholder and was masked locally by `.env`; a placeholder was added
+in this branch.
 
 **Skip mechanism:** the `integration` job carries
 
