@@ -93,37 +93,49 @@ export type Database = {
       }
       studios: {
         Row: {
+          background_image_url: string | null
           created_at: string
           description: string | null
           id: string
+          image_url: string | null
+          instagram_url: string | null
           name: string
           owner_user_id: string
           price_monthly: number
           slug: string
           stripe_price_id: string
           stripe_product_id: string
+          website: string | null
         }
         Insert: {
+          background_image_url?: string | null
           created_at?: string
           description?: string | null
           id?: string
+          image_url?: string | null
+          instagram_url?: string | null
           name: string
           owner_user_id: string
           price_monthly?: number
           slug: string
           stripe_price_id: string
           stripe_product_id: string
+          website?: string | null
         }
         Update: {
+          background_image_url?: string | null
           created_at?: string
           description?: string | null
           id?: string
+          image_url?: string | null
+          instagram_url?: string | null
           name?: string
           owner_user_id?: string
           price_monthly?: number
           slug?: string
           stripe_price_id?: string
           stripe_product_id?: string
+          website?: string | null
         }
         Relationships: [
           {
