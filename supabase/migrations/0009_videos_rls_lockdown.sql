@@ -1,0 +1,13 @@
+-- Close the anonymous-read hole on public.videos (security finding, 2026-07-10).
+--
+-- 0005_videos.sql created `videos_select_all` with USING (true), which let the
+-- anon/authenticated PostgREST roles read every row — including
+-- mux_playback_id, which (with the then-public Mux playback policy) made paid
+-- video publicly streamable without authentication.
+--
+-- All legitimate reads go through the API's service-role client, which
+-- bypasses RLS entirely. So: drop the permissive policy and leave RLS enabled
+-- with NO select policy — anon/authenticated now read zero rows, and nothing
+-- else changes. Playback authorization is enforced at the route layer plus
+-- signed Mux playback tokens (see src/lib/muxTokens.ts).
+drop policy if exists "videos_select_all" on public.videos;

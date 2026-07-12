@@ -5,10 +5,36 @@ import { env } from '../env.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/errorHandler.js';
 import { hasActiveSubscription } from '../lib/access.js';
+import { signVideoTokens } from '../lib/muxTokens.js';
 import type { MuxClient } from '../mux.js';
 
 const VIDEO_FIELDS =
-  'id, studio_id, title, description, status, mux_playback_id, duration_seconds, error_message, created_at' as const;
+  'id, studio_id, title, description, status, mux_playback_id, mux_playback_policy, duration_seconds, error_message, created_at' as const;
+
+// Attach short-lived signed playback/thumbnail tokens to a video row that has
+// passed the caller's entitlement check. Only ready videos with a playback id
+// get tokens — everything else has nothing playable to sign.
+function withPlaybackTokens<T extends {
+  status: string;
+  mux_playback_id: string | null;
+  mux_playback_policy: string | null;
+  duration_seconds: number | null;
+}>(
+  video: T,
+): T & { playback_token?: string; thumbnail_token?: string } {
+  if (
+    video.status !== 'ready' ||
+    !video.mux_playback_id ||
+    video.mux_playback_policy !== 'signed'
+  ) {
+    return video;
+  }
+  const { playbackToken, thumbnailToken } = signVideoTokens(
+    video.mux_playback_id,
+    video.duration_seconds,
+  );
+  return { ...video, playback_token: playbackToken, thumbnail_token: thumbnailToken };
+}
 
 const CreateBody = z.object({
   title: z.string().min(1).max(200),
@@ -95,7 +121,9 @@ export function createVideosRouter(deps: VideosDeps): Router {
           cors_origin: corsOrigin,
           test: env.NODE_ENV !== 'production',
           new_asset_settings: {
-            playback_policies: ['public'],
+            // Signed, not public: playback requires a short-lived token issued
+            // by the read routes after their entitlement check. See lib/muxTokens.
+            playback_policies: ['signed'],
             video_quality: 'basic',
             max_resolution_tier: '1080p',
             mp4_support: 'capped-1080p',
@@ -147,7 +175,10 @@ export function createVideosRouter(deps: VideosDeps): Router {
         .select(VIDEO_FIELDS)
         .single();
       if (updateErr || !updated) throw updateErr ?? new Error('update returned no row');
-      res.status(200).json({ video: updated });
+      // Same token contract as the GET routes: a client refreshing its model
+      // from the PATCH response must get a row it can still play.
+      res.set('Cache-Control', 'private, no-store');
+      res.status(200).json({ video: withPlaybackTokens(updated) });
     } catch (err) {
       next(err);
     }
@@ -223,7 +254,8 @@ export function createVideosRouter(deps: VideosDeps): Router {
       if (error) throw error;
       const rows = data ?? [];
       const nextCursor = rows.length === limit ? rows[rows.length - 1].created_at : null;
-      res.status(200).json({ videos: rows, nextCursor });
+      res.set('Cache-Control', 'private, no-store');
+      res.status(200).json({ videos: rows.map(withPlaybackTokens), nextCursor });
     } catch (err) {
       next(err);
     }
@@ -257,7 +289,8 @@ export function createVideosRouter(deps: VideosDeps): Router {
         if ((row as any).status !== 'ready') throw new ApiError(404, 'not_found', 'video not found');
       }
       const { studios: _omit, ...video } = row as any;
-      res.status(200).json({ video });
+      res.set('Cache-Control', 'private, no-store');
+      res.status(200).json({ video: withPlaybackTokens(video) });
     } catch (err) {
       next(err);
     }

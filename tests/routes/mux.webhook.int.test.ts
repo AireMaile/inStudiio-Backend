@@ -122,7 +122,7 @@ describe('POST /webhooks/mux — event handling', () => {
     expect(data?.mux_asset_id).toBe('asset_abc');
   });
 
-  it('video.asset.ready sets status=ready, mux_playback_id (public), duration_seconds', async () => {
+  it('video.asset.ready sets status=ready, mux_playback_id (signed preferred), duration_seconds', async () => {
     const owner = await createTestUser('plan3-vid-owner');
     users.push(owner);
     const studio = await insertTestStudio({
@@ -149,12 +149,41 @@ describe('POST /webhooks/mux — event handling', () => {
 
     const { data } = await supabase
       .from('videos')
-      .select('status, mux_playback_id, duration_seconds')
+      .select('status, mux_playback_id, mux_playback_policy, duration_seconds')
       .eq('id', video.id)
       .single();
     expect(data?.status).toBe('ready');
-    expect(data?.mux_playback_id).toBe('pb_public_ok');
+    expect(data?.mux_playback_id).toBe('pb_signed_xxx');
+    expect(data?.mux_playback_policy).toBe('signed');
     expect(Number(data?.duration_seconds)).toBeCloseTo(42.5);
+  });
+
+  it('video.asset.ready with no playback_ids writes null id + null policy (satisfies pair CHECK)', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}rd-noids-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'preparing', muxAssetId: 'asset_noids' });
+
+    const app = createApp();
+    const body = {
+      type: 'video.asset.ready',
+      id: `${EVENT_PREFIX}rdnoids_${Date.now()}`,
+      data: { passthrough: video.id, duration: 5, playback_ids: [] },
+    };
+    const res = await postWebhook(app, body);
+    expect(res.status).toBe(200);
+
+    const { data } = await supabase
+      .from('videos')
+      .select('status, mux_playback_id, mux_playback_policy')
+      .eq('id', video.id)
+      .single();
+    expect(data?.status).toBe('ready');
+    expect(data?.mux_playback_id).toBeNull();
+    expect(data?.mux_playback_policy).toBeNull();
   });
 
   it('video.asset.errored sets status=errored and error_message', async () => {

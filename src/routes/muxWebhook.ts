@@ -2,15 +2,11 @@ import { Router, type RequestHandler } from 'express';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
+import { pickPlayback, type MuxPlaybackId as PlaybackId } from '../lib/playbackIds.js';
 import type { MuxClient } from '../mux.js';
 
 export interface MuxWebhookDeps {
   mux: Pick<MuxClient, 'webhooks'>;
-}
-
-interface PlaybackId {
-  id: string;
-  policy: 'public' | 'signed';
 }
 
 export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
@@ -81,6 +77,7 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       status?: 'preparing' | 'ready' | 'errored';
       mux_asset_id?: string;
       mux_playback_id?: string | null;
+      mux_playback_policy?: 'public' | 'signed' | null;
       duration_seconds?: number | null;
       error_message?: string;
       updated_at: string;
@@ -105,11 +102,13 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
         const ids: PlaybackId[] = Array.isArray(event.data?.playback_ids)
           ? event.data.playback_ids
           : [];
-        const publicId = ids.find((p) => p.policy === 'public')?.id ?? null;
+        const playback = pickPlayback(ids);
         const duration = typeof event.data?.duration === 'number' ? event.data.duration : null;
         patch = {
           status: 'ready',
-          mux_playback_id: publicId,
+          // Signed preferred; public still honored for pre-migration assets.
+          mux_playback_id: playback?.id ?? null,
+          mux_playback_policy: playback?.policy ?? null,
           duration_seconds: duration,
           updated_at: new Date().toISOString(),
         };

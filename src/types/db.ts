@@ -210,6 +210,7 @@ export type Database = {
           id: string
           mux_asset_id: string | null
           mux_playback_id: string | null
+          mux_playback_policy: string | null
           mux_upload_id: string | null
           status: string
           studio_id: string
@@ -224,6 +225,7 @@ export type Database = {
           id?: string
           mux_asset_id?: string | null
           mux_playback_id?: string | null
+          mux_playback_policy?: string | null
           mux_upload_id?: string | null
           status?: string
           studio_id: string
@@ -238,6 +240,7 @@ export type Database = {
           id?: string
           mux_asset_id?: string | null
           mux_playback_id?: string | null
+          mux_playback_policy?: string | null
           mux_upload_id?: string | null
           status?: string
           studio_id?: string
@@ -395,4 +398,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-
