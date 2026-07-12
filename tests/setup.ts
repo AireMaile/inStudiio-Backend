@@ -10,6 +10,7 @@
 // role client bypasses JWT verification entirely — the JWT secret only matters for
 // verifying user tokens in middleware, which is exactly what those tests exercise.
 import 'dotenv/config';
+import { TEST_MUX_SIGNING_KEY_ID, testMuxPrivateKeyBase64 } from './helpers/muxSigningKey.js';
 
 if (!process.env.SUPABASE_URL) process.env.SUPABASE_URL = 'http://localhost:54321';
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
@@ -20,4 +21,8 @@ if (!process.env.MUX_TOKEN_ID) process.env.MUX_TOKEN_ID = 'test-mux-token-id';
 if (!process.env.MUX_TOKEN_SECRET) process.env.MUX_TOKEN_SECRET = 'test-mux-token-secret';
 // Force-override so webhook tests can compute valid signatures against a known value.
 process.env.MUX_WEBHOOK_SECRET = 'test-mux-webhook-secret-xyz';
+// Force-override with a per-worker generated keypair so playback tokens the app
+// signs can be verified in tests against tests/helpers/muxSigningKey.ts.
+process.env.MUX_SIGNING_KEY_ID = TEST_MUX_SIGNING_KEY_ID;
+process.env.MUX_SIGNING_PRIVATE_KEY = testMuxPrivateKeyBase64;
 process.env.NODE_ENV = 'test';

@@ -89,21 +89,25 @@ export async function insertTestVideo(opts: {
   muxUploadId?: string | null;
   muxAssetId?: string | null;
   muxPlaybackId?: string | null;
+  muxPlaybackPolicy?: 'public' | 'signed' | null;
   durationSeconds?: number | null;
   errorMessage?: string | null;
 }): Promise<TestVideo> {
+  const status = opts.status ?? 'ready';
+  const muxPlaybackId =
+    opts.muxPlaybackId ??
+    (status === 'ready' ? 'pb_test_' + Math.random().toString(36).slice(2, 10) : null);
   const { data, error } = await supabase
     .from('videos')
     .insert({
       studio_id: opts.studioId,
       title: opts.title ?? `Test video ${Math.random().toString(36).slice(2, 8)}`,
       description: opts.description ?? null,
-      status: opts.status ?? 'ready',
+      status,
       mux_upload_id: opts.muxUploadId ?? null,
       mux_asset_id: opts.muxAssetId ?? null,
-      mux_playback_id:
-        opts.muxPlaybackId ??
-        (opts.status === 'ready' ? 'pb_test_' + Math.random().toString(36).slice(2, 10) : null),
+      mux_playback_id: muxPlaybackId,
+      mux_playback_policy: opts.muxPlaybackPolicy ?? (muxPlaybackId ? 'signed' : null),
       duration_seconds: opts.durationSeconds ?? null,
       error_message: opts.errorMessage ?? null,
     })

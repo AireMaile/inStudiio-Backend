@@ -11,6 +11,12 @@ const Schema = z
     MUX_TOKEN_ID: z.string().min(1),
     MUX_TOKEN_SECRET: z.string().min(1),
     MUX_WEBHOOK_SECRET: z.string().min(1),
+    // Signing key pair for signed playback URLs (Settings → Signing Keys in the
+    // Mux dashboard). The private key is stored base64-encoded, exactly as Mux
+    // hands it out. Required: without it, entitled users can't be issued
+    // playback tokens and signed assets are unplayable.
+    MUX_SIGNING_KEY_ID: z.string().min(1),
+    MUX_SIGNING_PRIVATE_KEY: z.string().min(1),
     APP_ORIGIN: z.string().url().optional(),
     // Comma-separated list of allowed CORS origins for cross-origin frontend
     // dev (e.g. "http://localhost:5173,http://localhost:3001"). Empty/unset

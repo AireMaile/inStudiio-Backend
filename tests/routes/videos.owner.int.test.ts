@@ -86,7 +86,7 @@ describe('POST /studios/:slug/videos', () => {
     const args = mux.calls[0].args as any;
     expect(args.cors_origin).toBe('*');
     expect(args.test).toBe(true);
-    expect(args.new_asset_settings.playback_policies).toEqual(['public']);
+    expect(args.new_asset_settings.playback_policies).toEqual(['signed']);
     expect(args.new_asset_settings.passthrough).toBe(res.body.video.id);
   });
 
