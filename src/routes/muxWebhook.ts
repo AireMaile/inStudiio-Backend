@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 import { supabase } from '../supabase.js';
-import { pickPlayback, type MuxPlaybackId as PlaybackId } from '../lib/playbackIds.js';
+import { pickPlayback } from '../lib/playbackIds.js';
 import type { MuxClient } from '../mux.js';
 
 export interface MuxWebhookDeps {
@@ -36,39 +36,8 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       return;
     }
 
-    // Idempotency: try to record the event_id. If it's a duplicate, short-circuit.
-    const { data: ledger, error: ledgerErr } = await supabase
-      .from('mux_webhook_events')
-      .insert({ event_id: event.id, event_type: event.type })
-      .select('event_id')
-      .single();
-    if (ledgerErr) {
-      // Unique-violation on event_id means "already processed" — treat as success.
-      if ((ledgerErr as any).code === '23505') {
-        logger.info({ eventId: event.id }, 'mux webhook duplicate (ledger conflict), skipping');
-        res.status(200).json({ duplicate: true });
-        return;
-      }
-      logger.error({ err: ledgerErr, eventId: event.id }, 'mux webhook ledger insert failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
-      return;
-    }
-    if (!ledger) {
-      logger.error({ eventId: event.id }, 'mux webhook ledger insert returned no row');
-      res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
-      return;
-    }
-
     const passthrough =
       typeof event.data?.passthrough === 'string' ? event.data.passthrough : null;
-    if (!passthrough) {
-      logger.warn(
-        { eventId: event.id, type: event.type },
-        'mux webhook missing passthrough; no-op',
-      );
-      res.status(200).json({ noop: true });
-      return;
-    }
 
     // Build the update patch for the event type. Returns null for event types
     // we intentionally don't act on (unknown types, or asset_created without
@@ -80,7 +49,7 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       mux_playback_policy?: 'public' | 'signed' | null;
       duration_seconds?: number | null;
       error_message?: string;
-      updated_at: string;
+      set_media?: boolean;
     }
     let patch: VideoPatch | null = null;
     switch (event.type) {
@@ -93,13 +62,12 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
           patch = {
             status: 'preparing',
             mux_asset_id: assetId,
-            updated_at: new Date().toISOString(),
           };
         }
         break;
       }
       case 'video.asset.ready': {
-        const ids: PlaybackId[] = Array.isArray(event.data?.playback_ids)
+        const ids: unknown[] = Array.isArray(event.data?.playback_ids)
           ? event.data.playback_ids
           : [];
         const playback = pickPlayback(ids);
@@ -110,7 +78,7 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
           mux_playback_id: playback?.id ?? null,
           mux_playback_policy: playback?.policy ?? null,
           duration_seconds: duration,
-          updated_at: new Date().toISOString(),
+          set_media: true,
         };
         break;
       }
@@ -124,7 +92,6 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
         patch = {
           status: 'errored',
           error_message: message,
-          updated_at: new Date().toISOString(),
         };
         break;
       }
@@ -137,35 +104,74 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
         break;
     }
 
-    if (patch) {
-      const { error: updateErr } = await supabase
-        .from('videos')
-        .update(patch)
-        .eq('id', passthrough);
-      if (updateErr) {
-        // The DB update failed AFTER we already persisted the ledger row.
-        // Roll the ledger back so Mux's retry will be re-processed rather
-        // than short-circuited as a duplicate, then return 500 so Mux retries.
+    let videoId: string | undefined;
+    if (patch && passthrough) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(passthrough)) {
         logger.error(
-          { err: updateErr, eventId: event.id, type: event.type },
-          'mux webhook: videos update failed; rolling back ledger row',
+          { eventId: event.id, type: event.type, passthrough },
+          'mux webhook handled event has invalid passthrough UUID',
         );
-        const { error: rollbackErr } = await supabase
-          .from('mux_webhook_events')
-          .delete()
-          .eq('event_id', event.id);
-        if (rollbackErr) {
-          logger.error(
-            { err: rollbackErr, eventId: event.id },
-            'mux webhook: ledger rollback failed; event will be skipped on retry',
-          );
-        }
         res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
         return;
       }
+      videoId = passthrough;
     }
 
-    res.status(200).json({ ok: true });
+    const { data: result, error: rpcErr } = await supabase.rpc('process_mux_webhook_event', {
+      p_event_id: event.id,
+      p_event_type: event.type,
+      p_video_id: videoId,
+      p_status: patch?.status,
+      p_mux_asset_id: patch?.mux_asset_id,
+      p_error_message: patch?.error_message,
+      p_set_media: patch?.set_media,
+      p_mux_playback_id: patch?.mux_playback_id ?? undefined,
+      p_mux_playback_policy: patch?.mux_playback_policy ?? undefined,
+      p_duration_seconds: patch?.duration_seconds ?? undefined,
+    });
+    if (rpcErr) {
+      logger.error(
+        { err: rpcErr, eventId: event.id, type: event.type },
+        'mux webhook atomic persistence failed',
+      );
+      res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+      return;
+    }
+
+    switch (result) {
+      case 'duplicate':
+        logger.info({ eventId: event.id }, 'mux webhook duplicate, skipping');
+        res.status(200).json({ duplicate: true });
+        return;
+      case 'no_video':
+        logger.warn(
+          { eventId: event.id, type: event.type, videoId },
+          'mux webhook video not found; event recorded as no-op',
+        );
+        res.status(200).json({ ok: true });
+        return;
+      case 'recorded':
+        if (!passthrough) {
+          logger.warn(
+            { eventId: event.id, type: event.type },
+            'mux webhook missing passthrough; event recorded as no-op',
+          );
+          res.status(200).json({ noop: true });
+          return;
+        }
+        res.status(200).json({ ok: true });
+        return;
+      case 'processed':
+        res.status(200).json({ ok: true });
+        return;
+      default:
+        logger.error(
+          { eventId: event.id, type: event.type, result },
+          'mux webhook atomic persistence returned unknown result',
+        );
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+    }
   };
 
   router.post('/', handler);
