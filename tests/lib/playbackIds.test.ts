@@ -25,4 +25,19 @@ describe('pickPlayback', () => {
   it('ignores entries with unknown policies', () => {
     expect(pickPlayback([{ policy: 'drm' as any, id: 'x' }])).toBeNull();
   });
+
+  it('ignores malformed signed entries and falls back to a valid public id', () => {
+    expect(
+      pickPlayback([
+        { policy: 'signed' },
+        { policy: 'signed', id: '' },
+        { policy: 'signed', id: 123 },
+        { policy: 'public', id: 'pub_fallback' },
+      ]),
+    ).toEqual({ policy: 'public', id: 'pub_fallback' });
+  });
+
+  it('returns null when every entry is malformed', () => {
+    expect(pickPlayback([null, 'signed', {}, { policy: 'signed' }])).toBeNull();
+  });
 });

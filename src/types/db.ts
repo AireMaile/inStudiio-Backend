@@ -262,7 +262,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      process_mux_webhook_event: {
+        Args: {
+          p_duration_seconds?: number
+          p_error_message?: string
+          p_event_id: string
+          p_event_type: string
+          p_mux_asset_id?: string
+          p_mux_playback_id?: string
+          p_mux_playback_policy?: string
+          p_set_media?: boolean
+          p_status?: string
+          p_video_id?: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

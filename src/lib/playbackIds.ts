@@ -10,10 +10,21 @@ export interface MuxPlaybackId {
  * playback migration carry a `public` one, which we keep honoring until they
  * are rotated. Prefer signed so a rotated asset immediately switches over.
  */
-export function pickPlayback(ids: MuxPlaybackId[]): MuxPlaybackId | null {
+function isMuxPlaybackId(value: unknown): value is MuxPlaybackId {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { policy?: unknown; id?: unknown };
   return (
-    ids.find((p) => p.policy === 'signed') ??
-    ids.find((p) => p.policy === 'public') ??
+    (candidate.policy === 'signed' || candidate.policy === 'public') &&
+    typeof candidate.id === 'string' &&
+    candidate.id.length > 0
+  );
+}
+
+export function pickPlayback(ids: readonly unknown[]): MuxPlaybackId | null {
+  const valid = ids.filter(isMuxPlaybackId);
+  return (
+    valid.find((p) => p.policy === 'signed') ??
+    valid.find((p) => p.policy === 'public') ??
     null
   );
 }

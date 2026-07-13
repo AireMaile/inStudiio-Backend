@@ -186,6 +186,53 @@ describe('POST /webhooks/mux — event handling', () => {
     expect(data?.mux_playback_policy).toBeNull();
   });
 
+  it('filters malformed playback entries and uses a valid public fallback', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}rd-malformed-${Date.now()}`,
+    });
+    const video = await insertTestVideo({
+      studioId: studio.id,
+      status: 'preparing',
+      muxAssetId: 'asset_malformed',
+    });
+    const eventId = `${EVENT_PREFIX}rdmalformed_${Date.now()}`;
+
+    const app = createApp();
+    const res = await postWebhook(app, {
+      type: 'video.asset.ready',
+      id: eventId,
+      data: {
+        passthrough: video.id,
+        duration: 5,
+        playback_ids: [
+          { policy: 'signed' },
+          { policy: 'public', id: 'pb_valid_fallback' },
+        ],
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(1);
+
+    const { data } = await supabase
+      .from('videos')
+      .select('status, mux_playback_id, mux_playback_policy')
+      .eq('id', video.id)
+      .single();
+    expect(data).toMatchObject({
+      status: 'ready',
+      mux_playback_id: 'pb_valid_fallback',
+      mux_playback_policy: 'public',
+    });
+  });
+
   it('video.asset.errored sets status=errored and error_message', async () => {
     const owner = await createTestUser('plan3-vid-owner');
     users.push(owner);
@@ -216,18 +263,42 @@ describe('POST /webhooks/mux — event handling', () => {
     expect(data?.error_message).toMatch(/input_invalid.*codec_unsupported/);
   });
 
-  it('unknown event type returns 200 with no DB writes', async () => {
+  it('unknown event type returns 200 and records exactly one ledger row', async () => {
     const app = createApp();
+    const eventId = `${EVENT_PREFIX}unknown_${Date.now()}`;
     const body = {
       type: 'video.asset.created',
-      id: `${EVENT_PREFIX}unknown_${Date.now()}`,
+      id: eventId,
       data: { passthrough: '00000000-0000-0000-0000-000000000000' },
     };
     const res = await postWebhook(app, body);
     expect(res.status).toBe(200);
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(1);
   });
 
-  it('invalid passthrough UUID causes DB error → 500 + ledger rolled back', async () => {
+  it('missing passthrough returns noop and records exactly one ledger row', async () => {
+    const app = createApp();
+    const eventId = `${EVENT_PREFIX}missing_passthrough_${Date.now()}`;
+    const res = await postWebhook(app, {
+      type: 'video.asset.ready',
+      id: eventId,
+      data: { duration: 1, playback_ids: [{ id: 'pb_x', policy: 'signed' }] },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ noop: true });
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(1);
+  });
+
+  it('invalid passthrough UUID returns 500 without creating a ledger row', async () => {
     const app = createApp();
     const eventId = `${EVENT_PREFIX}dberr_${Date.now()}`;
     const body = {
@@ -242,8 +313,8 @@ describe('POST /webhooks/mux — event handling', () => {
     const res = await postWebhook(app, body);
     expect(res.status).toBe(500);
 
-    // Ledger row must have been rolled back so Mux's retry is re-processed,
-    // not short-circuited as a duplicate.
+    // The invalid UUID is rejected before the RPC so Mux can surface the
+    // poison event through its retry exhaustion / failed-delivery UI.
     const { count } = await supabase
       .from('mux_webhook_events')
       .select('event_id', { count: 'exact', head: true })
@@ -253,9 +324,10 @@ describe('POST /webhooks/mux — event handling', () => {
 
   it('passthrough pointing to non-existent video returns 200, logs, no-op', async () => {
     const app = createApp();
+    const eventId = `${EVENT_PREFIX}orphan_${Date.now()}`;
     const body = {
       type: 'video.asset.ready',
-      id: `${EVENT_PREFIX}orphan_${Date.now()}`,
+      id: eventId,
       data: {
         passthrough: '00000000-0000-0000-0000-000000000000',
         duration: 1,
@@ -264,5 +336,10 @@ describe('POST /webhooks/mux — event handling', () => {
     };
     const res = await postWebhook(app, body);
     expect(res.status).toBe(200);
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(1);
   });
 });
