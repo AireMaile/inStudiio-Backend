@@ -52,6 +52,7 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
       set_media?: boolean;
     }
     let patch: VideoPatch | null = null;
+    let reconciliationAssetId: string | null = null;
     switch (event.type) {
       case 'video.upload.asset_created': {
         // `data` is the Mux Upload resource; the newly-created asset's id is
@@ -72,14 +73,21 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
           : [];
         const playback = pickPlayback(ids);
         const duration = typeof event.data?.duration === 'number' ? event.data.duration : null;
-        patch = {
-          status: 'ready',
-          // Signed preferred; public still honored for pre-migration assets.
-          mux_playback_id: playback?.id ?? null,
-          mux_playback_policy: playback?.policy ?? null,
-          duration_seconds: duration,
-          set_media: true,
-        };
+        if (playback) {
+          patch = {
+            status: 'ready',
+            // Signed preferred; public still honored for pre-migration assets.
+            mux_playback_id: playback.id,
+            mux_playback_policy: playback.policy,
+            duration_seconds: duration,
+            set_media: true,
+          };
+        } else {
+          reconciliationAssetId =
+            typeof event.data?.id === 'string' && event.data.id.trim().length > 0
+              ? event.data.id
+              : null;
+        }
         break;
       }
       case 'video.asset.errored': {
@@ -102,6 +110,97 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
           'mux webhook: unhandled event type',
         );
         break;
+    }
+
+    if (event.type === 'video.asset.ready' && !patch) {
+      if (!reconciliationAssetId) {
+        logger.error(
+          { eventId: event.id, type: event.type },
+          'mux webhook ready event has no usable playback ID or asset ID',
+        );
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+      }
+      if (
+        !passthrough ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          passthrough,
+        )
+      ) {
+        logger.error(
+          { eventId: event.id, type: event.type, passthrough, assetId: reconciliationAssetId },
+          'mux webhook ready reconciliation has invalid passthrough UUID',
+        );
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+      }
+
+      const { data: queueResult, error: queueErr } = await supabase.rpc(
+        'queue_mux_playback_reconciliation_event',
+        {
+          p_event_id: event.id,
+          p_event_type: event.type,
+          p_video_id: passthrough,
+          p_mux_asset_id: reconciliationAssetId,
+        },
+      );
+      if (queueErr) {
+        logger.error(
+          {
+            err: queueErr,
+            eventId: event.id,
+            type: event.type,
+            videoId: passthrough,
+            assetId: reconciliationAssetId,
+          },
+          'mux webhook reconciliation enqueue failed',
+        );
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+      }
+
+      switch (queueResult) {
+        case 'queued':
+          logger.warn(
+            {
+              eventId: event.id,
+              type: event.type,
+              videoId: passthrough,
+              assetId: reconciliationAssetId,
+            },
+            'mux webhook ready event queued for playback reconciliation',
+          );
+          res.status(200).json({ ok: true, reconciliation: 'queued' });
+          return;
+        case 'duplicate':
+          logger.info({ eventId: event.id }, 'mux webhook reconciliation duplicate, skipping');
+          res.status(200).json({ duplicate: true });
+          return;
+        case 'no_video':
+          logger.warn(
+            { eventId: event.id, videoId: passthrough, assetId: reconciliationAssetId },
+            'mux webhook reconciliation video not found; event recorded as no-op',
+          );
+          res.status(200).json({ ok: true });
+          return;
+        case 'already_resolved':
+          res.status(200).json({ ok: true, reconciliation: 'already_resolved' });
+          return;
+        case 'asset_mismatch':
+          logger.error(
+            { eventId: event.id, videoId: passthrough, assetId: reconciliationAssetId },
+            'mux webhook reconciliation asset does not match video',
+          );
+          res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+          return;
+        default:
+          logger.error(
+            { eventId: event.id, type: event.type, result: queueResult },
+            'mux webhook reconciliation enqueue returned unknown result',
+          );
+          res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+          return;
+      }
     }
 
     let videoId: string | undefined;
@@ -163,6 +262,13 @@ export function createMuxWebhookRouter(deps: MuxWebhookDeps): Router {
         return;
       case 'processed':
         res.status(200).json({ ok: true });
+        return;
+      case 'stale_transition':
+        logger.info(
+          { eventId: event.id, type: event.type, videoId },
+          'mux webhook stale lifecycle transition ignored',
+        );
+        res.status(200).json({ ok: true, stale: true });
         return;
       default:
         logger.error(

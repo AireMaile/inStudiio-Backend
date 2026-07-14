@@ -25,6 +25,10 @@ export default defineConfig({
         test: {
           ...shared,
           name: 'integration',
+          // Reconciliation workers intentionally claim global due work. Run
+          // integration files serially so one test file cannot lease another
+          // file's fixture while still preserving concurrency inside tests.
+          fileParallelism: false,
           // Requires a running local Supabase (supabase start).
           include: ['tests/**/*.int.test.ts'],
         },

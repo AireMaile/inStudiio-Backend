@@ -34,6 +34,77 @@ export type Database = {
   }
   public: {
     Tables: {
+      mux_playback_reconciliations: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          finished_at: string | null
+          id: string
+          infra_attempt_count: number
+          last_error_class: string | null
+          last_error_code: string | null
+          last_error_message: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          mux_asset_id: string
+          next_attempt_at: string | null
+          not_found_attempt_count: number
+          reopen_count: number
+          source_event_id: string | null
+          state: string
+          updated_at: string
+          video_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          infra_attempt_count?: number
+          last_error_class?: string | null
+          last_error_code?: string | null
+          last_error_message?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          mux_asset_id: string
+          next_attempt_at?: string | null
+          not_found_attempt_count?: number
+          reopen_count?: number
+          source_event_id?: string | null
+          state?: string
+          updated_at?: string
+          video_id: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          infra_attempt_count?: number
+          last_error_class?: string | null
+          last_error_code?: string | null
+          last_error_message?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          mux_asset_id?: string
+          next_attempt_at?: string | null
+          not_found_attempt_count?: number
+          reopen_count?: number
+          source_event_id?: string | null
+          state?: string
+          updated_at?: string
+          video_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mux_playback_reconciliations_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       mux_webhook_events: {
         Row: {
           event_id: string
@@ -262,6 +333,30 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_mux_playback_reconciliations: {
+        Args: { p_lease_seconds?: number; p_limit?: number }
+        Returns: {
+          attempt_count: number
+          job_id: string
+          lease_expires_at: string
+          lease_token: string
+          mux_asset_id: string
+          video_id: string
+        }[]
+      }
+      finish_mux_playback_reconciliation: {
+        Args: {
+          p_duration_seconds?: number
+          p_error_code?: string
+          p_error_message?: string
+          p_job_id: string
+          p_lease_token: string
+          p_outcome: string
+          p_playback_id?: string
+          p_playback_policy?: string
+        }
+        Returns: string
+      }
       process_mux_webhook_event: {
         Args: {
           p_duration_seconds?: number
@@ -275,6 +370,19 @@ export type Database = {
           p_status?: string
           p_video_id?: string
         }
+        Returns: string
+      }
+      queue_mux_playback_reconciliation_event: {
+        Args: {
+          p_event_id: string
+          p_event_type: string
+          p_mux_asset_id: string
+          p_video_id: string
+        }
+        Returns: string
+      }
+      requeue_mux_playback_reconciliation: {
+        Args: { p_job_id: string }
         Returns: string
       }
     }

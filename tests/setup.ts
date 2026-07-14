@@ -25,4 +25,5 @@ process.env.MUX_WEBHOOK_SECRET = 'test-mux-webhook-secret-xyz';
 // signs can be verified in tests against tests/helpers/muxSigningKey.ts.
 process.env.MUX_SIGNING_KEY_ID = TEST_MUX_SIGNING_KEY_ID;
 process.env.MUX_SIGNING_PRIVATE_KEY = testMuxPrivateKeyBase64;
+process.env.CRON_SECRET = 'test-cron-secret-123456789';
 process.env.NODE_ENV = 'test';

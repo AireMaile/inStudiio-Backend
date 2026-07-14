@@ -135,11 +135,11 @@ describe('process_mux_webhook_event RPC', () => {
     expect(row?.status).toBe('preparing');
   });
 
-  it('p_set_media explicitly clears playback id, policy, and duration together', async () => {
+  it('ready invariant rejects clearing playback media and rolls back the ledger', async () => {
     const video = await makeVideo('ready');
     const eventId = `${EVENT_PREFIX}clear_${Date.now()}`;
 
-    const { data, error } = await supabase.rpc('process_mux_webhook_event', {
+    const { error } = await supabase.rpc('process_mux_webhook_event', {
       p_event_id: eventId,
       p_event_type: 'video.asset.ready',
       p_video_id: video.id,
@@ -147,18 +147,15 @@ describe('process_mux_webhook_event RPC', () => {
       p_set_media: true,
     });
 
-    expect(error).toBeNull();
-    expect(data).toBe('processed');
+    expect(error?.code).toBe('23514');
+    expect(await ledgerCount(eventId)).toBe(0);
     const { data: row } = await supabase
       .from('videos')
       .select('mux_playback_id, mux_playback_policy, duration_seconds')
       .eq('id', video.id)
       .single();
-    expect(row).toEqual({
-      mux_playback_id: null,
-      mux_playback_policy: null,
-      duration_seconds: null,
-    });
+    expect(row?.mux_playback_id).not.toBeNull();
+    expect(row?.mux_playback_policy).toBe('signed');
   });
 
   it('returns no_video and commits the ledger for a missing valid UUID', async () => {
@@ -212,5 +209,37 @@ describe('process_mux_webhook_event RPC', () => {
       .eq('id', video.id)
       .single();
     expect(after).toEqual(before);
+  });
+
+  it('does not let a late asset_created event regress a ready video', async () => {
+    const video = await makeVideo('ready');
+    const eventId = `${EVENT_PREFIX}stale_transition_${Date.now()}`;
+    const originalUpdatedAt = '2026-01-01T00:00:00.000Z';
+    const { error: seedError } = await supabase
+      .from('videos')
+      .update({ mux_asset_id: 'asset_original', updated_at: originalUpdatedAt })
+      .eq('id', video.id);
+    expect(seedError).toBeNull();
+
+    const result = await supabase.rpc('process_mux_webhook_event', {
+      p_event_id: eventId,
+      p_event_type: 'video.upload.asset_created',
+      p_video_id: video.id,
+      p_status: 'preparing',
+      p_mux_asset_id: 'asset_late',
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.data).toBe('stale_transition');
+    expect(await ledgerCount(eventId)).toBe(1);
+    const { data: row } = await supabase
+      .from('videos')
+      .select('status, mux_asset_id, mux_playback_id, updated_at')
+      .eq('id', video.id)
+      .single();
+    expect(row?.status).toBe('ready');
+    expect(row?.mux_asset_id).toBe('asset_original');
+    expect(row?.mux_playback_id).not.toBeNull();
+    expect(new Date(row?.updated_at ?? 0).toISOString()).toBe(originalUpdatedAt);
   });
 });

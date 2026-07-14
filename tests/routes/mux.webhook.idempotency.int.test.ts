@@ -73,4 +73,61 @@ describe('POST /webhooks/mux — idempotency', () => {
       .eq('event_id', body.id);
     expect(count).toBe(1);
   });
+
+  it('replaying an anomalous ready event creates one ledger row and one workflow', async () => {
+    const owner = await createTestUser('plan3-vid-reconcile-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}reconcile-${Date.now()}`,
+    });
+    const video = await insertTestVideo({
+      studioId: studio.id,
+      status: 'preparing',
+      muxAssetId: 'asset_replay_missing_playback',
+    });
+
+    const app = createApp();
+    const body = {
+      type: 'video.asset.ready',
+      id: `${EVENT_PREFIX}reconcile_${Date.now()}`,
+      data: {
+        id: 'asset_replay_missing_playback',
+        passthrough: video.id,
+        playback_ids: [],
+      },
+    };
+
+    for (let i = 0; i < 3; i += 1) {
+      const raw = JSON.stringify(body);
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = signMuxPayload(raw, ts, env.MUX_WEBHOOK_SECRET);
+      const res = await request(app)
+        .post('/webhooks/mux')
+        .set('Content-Type', 'application/json')
+        .set('Mux-Signature', sig)
+        .send(raw);
+      expect(res.status).toBe(200);
+    }
+
+    const { count: eventCount } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', body.id);
+    expect(eventCount).toBe(1);
+
+    const { data: jobs, error: jobsError } = await supabase
+      .from('mux_playback_reconciliations')
+      .select('state, attempt_count, reopen_count, source_event_id')
+      .eq('video_id', video.id);
+    expect(jobsError).toBeNull();
+    expect(jobs).toEqual([
+      {
+        state: 'pending',
+        attempt_count: 0,
+        reopen_count: 0,
+        source_event_id: body.id,
+      },
+    ]);
+  });
 });

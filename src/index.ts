@@ -11,6 +11,7 @@ import { createMuxWebhookRouter } from './routes/muxWebhook.js';
 import { createStripeWebhookRouter } from './routes/stripeWebhook.js';
 import { createSubscriptionsRouter } from './routes/subscriptions.js';
 import { createSubscribePagesRouter } from './routes/subscribePages.js';
+import { createInternalJobsRouter } from './routes/internalJobs.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { mux as defaultMux, type MuxClient } from './mux.js';
 import { stripe as defaultStripe } from './stripe.js';
@@ -62,6 +63,7 @@ export function createApp(deps: AppDeps = {}): Express {
   app.use('/me', meRouter);
   app.use('/subscriptions', createSubscriptionsRouter({ stripe }));
   app.use('/subscribe', createSubscribePagesRouter());
+  app.use('/internal/jobs', createInternalJobsRouter({ mux }));
   app.use('/', createVideosRouter({ mux }));
   app.use(errorHandler);
   return app;

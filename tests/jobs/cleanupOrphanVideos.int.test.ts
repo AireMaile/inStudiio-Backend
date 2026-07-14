@@ -20,6 +20,12 @@ async function insertVideo(opts: {
       title: opts.title ?? 'janitor test video',
       status: opts.status,
       created_at: createdAt,
+      ...(opts.status === 'ready'
+        ? {
+            mux_playback_id: 'pb_janitor_ready',
+            mux_playback_policy: 'signed' as const,
+          }
+        : {}),
     })
     .select('id')
     .single();
