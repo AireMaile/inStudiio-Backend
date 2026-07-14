@@ -158,7 +158,7 @@ describe('POST /webhooks/mux — event handling', () => {
     expect(Number(data?.duration_seconds)).toBeCloseTo(42.5);
   });
 
-  it('video.asset.ready with no playback_ids writes null id + null policy (satisfies pair CHECK)', async () => {
+  it('video.asset.ready with no usable playback ID atomically queues reconciliation', async () => {
     const owner = await createTestUser('plan3-vid-owner');
     users.push(owner);
     const studio = await insertTestStudio({
@@ -171,19 +171,87 @@ describe('POST /webhooks/mux — event handling', () => {
     const body = {
       type: 'video.asset.ready',
       id: `${EVENT_PREFIX}rdnoids_${Date.now()}`,
-      data: { passthrough: video.id, duration: 5, playback_ids: [] },
+      data: { id: 'asset_noids', passthrough: video.id, duration: 5, playback_ids: [] },
     };
     const res = await postWebhook(app, body);
     expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, reconciliation: 'queued' });
 
     const { data } = await supabase
       .from('videos')
       .select('status, mux_playback_id, mux_playback_policy')
       .eq('id', video.id)
       .single();
-    expect(data?.status).toBe('ready');
+    expect(data?.status).toBe('preparing');
     expect(data?.mux_playback_id).toBeNull();
     expect(data?.mux_playback_policy).toBeNull();
+
+    const { data: job } = await supabase
+      .from('mux_playback_reconciliations')
+      .select('state, mux_asset_id, source_event_id')
+      .eq('video_id', video.id)
+      .single();
+    expect(job).toEqual({
+      state: 'pending',
+      mux_asset_id: 'asset_noids',
+      source_event_id: body.id,
+    });
+
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', body.id);
+    expect(count).toBe(1);
+  });
+
+  it('ready event without usable playback or asset ID returns 500 and is not ledgered', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}rd-no-asset-${Date.now()}`,
+    });
+    const video = await insertTestVideo({ studioId: studio.id, status: 'preparing' });
+    const eventId = `${EVENT_PREFIX}rdnoasset_${Date.now()}`;
+
+    const res = await postWebhook(createApp(), {
+      type: 'video.asset.ready',
+      id: eventId,
+      data: { passthrough: video.id, playback_ids: [] },
+    });
+    expect(res.status).toBe(500);
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(0);
+  });
+
+  it('ready reconciliation rejects an asset mismatch without ledgering the event', async () => {
+    const owner = await createTestUser('plan3-vid-owner');
+    users.push(owner);
+    const studio = await insertTestStudio({
+      ownerUserId: owner.id,
+      slug: `${SLUG_PREFIX}rd-mismatch-${Date.now()}`,
+    });
+    const video = await insertTestVideo({
+      studioId: studio.id,
+      status: 'preparing',
+      muxAssetId: 'asset_original',
+    });
+    const eventId = `${EVENT_PREFIX}rdmismatch_${Date.now()}`;
+
+    const res = await postWebhook(createApp(), {
+      type: 'video.asset.ready',
+      id: eventId,
+      data: { id: 'asset_wrong', passthrough: video.id, playback_ids: [] },
+    });
+    expect(res.status).toBe(500);
+    const { count } = await supabase
+      .from('mux_webhook_events')
+      .select('event_id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    expect(count).toBe(0);
   });
 
   it('filters malformed playback entries and uses a valid public fallback', async () => {

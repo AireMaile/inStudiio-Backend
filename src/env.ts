@@ -17,6 +17,9 @@ const Schema = z
     // playback tokens and signed assets are unplayable.
     MUX_SIGNING_KEY_ID: z.string().min(1),
     MUX_SIGNING_PRIVATE_KEY: z.string().min(1),
+    // Shared secret for the internal reconciliation worker endpoint. Supabase
+    // Cron sends it as an exact Bearer token from Vault.
+    CRON_SECRET: z.string().min(16).optional(),
     APP_ORIGIN: z.string().url().optional(),
     // Comma-separated list of allowed CORS origins for cross-origin frontend
     // dev (e.g. "http://localhost:5173,http://localhost:3001"). Empty/unset
@@ -30,6 +33,10 @@ const Schema = z
   .refine(
     (v) => v.NODE_ENV !== 'production' || !!v.APP_ORIGIN,
     { message: 'APP_ORIGIN is required when NODE_ENV=production', path: ['APP_ORIGIN'] },
+  )
+  .refine(
+    (v) => v.NODE_ENV !== 'production' || !!v.CRON_SECRET,
+    { message: 'CRON_SECRET is required when NODE_ENV=production', path: ['CRON_SECRET'] },
   );
 
 export type Env = z.infer<typeof Schema>;
